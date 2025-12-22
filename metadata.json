@@ -1,0 +1,7 @@
+{
+  "name": "HealthVault AI: Rural Health Loop",
+  "description": "A high-impact medical demo combining offline health storage with AI-powered delta-syncing for rural healthcare workers and patients.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
