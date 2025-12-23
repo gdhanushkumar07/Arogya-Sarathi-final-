@@ -207,6 +207,7 @@ const App: React.FC = () => {
   >("symptoms");
   const [unreadMessageCount, setUnreadMessageCount] = useState(0);
   const [whatsappNotify, setWhatsappNotify] = useState<string | null>(null);
+  const [backendMessages, setBackendMessages] = useState<any[]>([]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -308,6 +309,24 @@ const App: React.FC = () => {
     }
   }, [userRole]);
 
+  // Function to fetch messages from backend
+  const fetchPatientMessages = useCallback(async () => {
+    if (!patientProfile) return;
+
+    try {
+      const response = await fetch(
+        `http://localhost:4000/api/get-patient-messages?patientId=${patientProfile.patientId}`
+      );
+      if (response.ok) {
+        const data = await response.json();
+        setBackendMessages(data.messages || []);
+        console.log("📨 Fetched backend messages:", data.messages?.length || 0);
+      }
+    } catch (error) {
+      console.error("❌ Failed to fetch patient messages:", error);
+    }
+  }, [patientProfile]);
+
   // Load patient data when patient profile changes
   useEffect(() => {
     if (patientProfile) {
@@ -345,12 +364,15 @@ const App: React.FC = () => {
         setSyncPool(JSON.parse(savedSync));
       }
 
+      // Fetch messages from backend
+      fetchPatientMessages();
+
       // Initialize medicine reminders for this patient
       reminderService.startReminderChecks(patientProfile.patientId);
 
       console.log("✅ Patient data loaded for:", patientProfile.name);
     }
-  }, [patientProfile]);
+  }, [patientProfile, fetchPatientMessages]);
 
   // Complete logout function with session reset
   const handleLogout = useCallback(() => {
@@ -475,19 +497,29 @@ const App: React.FC = () => {
 
   // Patient switching function
   const handlePatientSwitch = useCallback(
-    (selectedPatient: PatientProfile) => {
-      console.log("🔄 Switching to patient:", selectedPatient.patientId);
-      console.log("Current patients available:", availablePatients.length);
+    (selectedPatient: PatientProfile | null) => {
+      if (selectedPatient) {
+        // Switching to existing patient
+        console.log("🔄 Switching to patient:", selectedPatient.patientId);
+        console.log("Current patients available:", availablePatients.length);
 
-      // Clear old data first
-      clearCurrentPatientData();
+        // Clear old data first
+        clearCurrentPatientData();
 
-      // Switch to new patient
-      setPatientProfile(selectedPatient);
-      setShowPatientSelector(false);
+        // Switch to new patient
+        setPatientProfile(selectedPatient);
+        setShowPatientSelector(false);
 
-      // Data will be loaded automatically by the useEffect above
-      console.log("✅ Patient switch initiated for:", selectedPatient.name);
+        // Data will be loaded automatically by the useEffect above
+        console.log("✅ Patient switch initiated for:", selectedPatient.name);
+      } else {
+        // Adding new patient - clear selector and let PatientOnboarding handle it
+        console.log("🔄 Initiating new patient onboarding");
+        setShowPatientSelector(false);
+        setPatientProfile(null);
+        // The PatientOnboarding will be shown automatically when patientProfile is null
+        console.log("✅ New patient onboarding initiated");
+      }
     },
     [availablePatients, clearCurrentPatientData]
   );
@@ -763,17 +795,23 @@ const App: React.FC = () => {
     reader.readAsDataURL(file);
   };
 
-  // Calculate unread message count from local records
+  // Calculate unread message count from local records and backend messages
   useEffect(() => {
     if (userRole === "PATIENT" && patientProfile) {
       const doctorRecords = vault.records.filter(
         (record) =>
           record.type === "PRESCRIPTION" || record.type === "DOCTOR_NOTE"
       );
-      // For now, just show total count since we don't have read/unread status
-      setUnreadMessageCount(doctorRecords.length);
+
+      // Count unread backend messages
+      const unreadBackendMessages = backendMessages.filter(
+        (msg) => !msg.read
+      ).length;
+
+      // Total unread count
+      setUnreadMessageCount(doctorRecords.length + unreadBackendMessages);
     }
-  }, [userRole, patientProfile, vault.records]);
+  }, [userRole, patientProfile, vault.records, backendMessages]);
 
   const handleDoctorSubmit = async () => {
     if (!activeCase || (!doctorMedInput.trim() && !doctorNoteInput.trim()))
@@ -783,8 +821,13 @@ const App: React.FC = () => {
       const clinicalContext = doctorNoteInput || "Standard clinical advice.";
       const medication = doctorMedInput || "General health consultation.";
 
-      // Use backend API for patient response
-      const response = await fetch(
+      const type = doctorMedInput ? "PRESCRIPTION" : "DOCTOR_NOTE";
+      const messagePayload = doctorMedInput
+        ? `RX: ${medication}`
+        : `Advice: ${doctorNoteInput}`;
+
+      // First generate translated content/icons for patient delivery
+      const translationResponse = await fetch(
         "http://localhost:4000/api/patient-response",
         {
           method: "POST",
@@ -797,13 +840,33 @@ const App: React.FC = () => {
         }
       );
 
+      const translation =
+        translationResponse.ok ? await translationResponse.json() : null;
+
+      // Persist the doctor message so patients can fetch it later
+      const response = await fetch(
+        "http://localhost:4000/api/send-doctor-message",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            patientId: activeCase.patientId,
+            doctorId: doctorProfile?.id || "DOCTOR",
+            doctorName: doctorProfile?.name || "Unknown Doctor",
+            doctorSpecialization:
+              doctorProfile?.specialization || "General Medicine",
+            type,
+            message: messagePayload,
+            timestamp: Date.now(),
+          }),
+        }
+      );
+
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }
 
       const response_data = await response.json();
-
-      const type = doctorMedInput ? "PRESCRIPTION" : "DOCTOR_NOTE";
 
       // Generate thread ID for conversation
       const threadId = `THREAD-${activeCase.patientId}-${Date.now()}`;
@@ -812,13 +875,12 @@ const App: React.FC = () => {
       const doctorMessage: MedicalRecord = {
         id: `DOC-${Date.now()}`,
         type: type as any,
-        content: doctorMedInput
-          ? `RX: ${medication}`
-          : `Advice: ${doctorNoteInput}`,
-        translatedContent: response_data.text,
+        content: messagePayload,
+        translatedContent:
+          translation?.text || doctorMedInput || doctorNoteInput,
         timestamp: Date.now(),
         status: "SYNCED",
-        icons: response_data.icons as any,
+        icons: translation?.icons as any,
         doctorInfo: {
           name: doctorProfile?.name || "Unknown Doctor",
           specialization: doctorProfile?.specialization || "General Medicine",
@@ -840,7 +902,7 @@ const App: React.FC = () => {
           id: `ORD-${Math.floor(Math.random() * 1000)}`,
           patientName: activeCase.patientName,
           medication: medication,
-          instruction: response_data.text,
+          instruction: response_data.text || doctorMedInput,
           timestamp: Date.now(),
           status: "RECEIVED",
           prescribedBy: doctorProfile?.name,
@@ -1298,7 +1360,7 @@ const App: React.FC = () => {
               <Database size={40} />
             </div>
             <h1 className="text-5xl font-black text-white tracking-tighter">
-              HealthVault AI
+              Arogya Sarathi
             </h1>
             <p className="text-slate-400 mt-2 font-medium">
               Rural Medical Sync Network
@@ -1521,7 +1583,7 @@ const App: React.FC = () => {
             </div>
             <div>
               <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1">
-                HealthVault AI
+                Arogya Sarathi
               </p>
               <h2 className="font-extrabold text-slate-900 text-sm">
                 {userRole} TERMINAL
@@ -1943,10 +2005,82 @@ const App: React.FC = () => {
                   <div className="flex items-center gap-2 text-[10px] font-black text-slate-400 uppercase tracking-widest">
                     <Stethoscope size={14} /> <span>Doctor Responses</span>
                   </div>
-                  <div className="text-[9px] font-bold text-emerald-600 bg-emerald-50 px-4 py-2 rounded-full uppercase tracking-wider border border-emerald-100">
-                    Local Records
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={fetchPatientMessages}
+                      className="text-[9px] font-bold text-blue-600 bg-blue-50 px-3 py-2 rounded-full uppercase tracking-wider border border-blue-100 hover:bg-blue-100 transition-colors flex items-center gap-1"
+                    >
+                      <RefreshCw size={12} />
+                      Refresh
+                    </button>
+                    <div className="text-[9px] font-bold text-emerald-600 bg-emerald-50 px-4 py-2 rounded-full uppercase tracking-wider border border-emerald-100">
+                      {backendMessages.length > 0
+                        ? `${backendMessages.length} Backend`
+                        : "Local Records"}
+                    </div>
                   </div>
                 </div>
+
+                {/* Doctor Messages from Backend */}
+                {backendMessages.length > 0 && (
+                  <div className="space-y-4">
+                    {backendMessages
+                      .slice()
+                      .reverse()
+                      .map((msg) => (
+                        <div
+                          key={msg.id}
+                          className="bg-white rounded-[40px] p-8 border border-emerald-100 shadow-sm transition-all hover:shadow-md hover:border-emerald-200 group"
+                        >
+                          <div className="flex items-start gap-6">
+                            <div className="bg-emerald-50 text-emerald-600 group-hover:bg-emerald-600 group-hover:text-white p-4 rounded-3xl transition-colors">
+                              {msg.type === "PRESCRIPTION" ? (
+                                <ShieldCheck size={28} />
+                              ) : (
+                                <MessageCircle size={28} />
+                              )}
+                            </div>
+                            <div className="flex-1">
+                              <div className="flex justify-between items-center mb-3">
+                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                                  {msg.timestamp
+                                    ? new Date(msg.timestamp).toLocaleString()
+                                    : "From Doctor"}
+                                </span>
+                                <div className="flex items-center gap-1.5 bg-emerald-50 text-emerald-700 text-[9px] font-black px-3 py-1 rounded-full uppercase">
+                                  <CheckCircle2 size={10} /> Backend Message
+                                </div>
+                              </div>
+
+                              <div className="bg-emerald-50 p-4 rounded-2xl mb-4 border border-emerald-100">
+                                <div className="flex items-center gap-2 mb-2">
+                                  <Stethoscope
+                                    size={14}
+                                    className="text-emerald-600"
+                                  />
+                                  <span className="text-[10px] font-black text-emerald-700 uppercase tracking-widest">
+                                    Doctor Details
+                                  </span>
+                                </div>
+                                <div className="text-sm">
+                                  <p className="font-bold text-emerald-800">
+                                    {msg.doctorName || "Doctor"}
+                                  </p>
+                                  <p className="text-[10px] text-emerald-600 uppercase tracking-wider">
+                                    {msg.specialization || "General Medicine"}
+                                  </p>
+                                </div>
+                              </div>
+
+                              <p className="text-slate-900 font-bold text-lg mb-3 leading-snug">
+                                {msg.content}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                )}
 
                 {/* Doctor Messages from Local Vault */}
                 {(() => {

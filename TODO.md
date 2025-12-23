@@ -2,7 +2,7 @@
 
 ## Overview
 
-Remove all messaging-related functionality from the HealthVault AI app to simplify the user interface and remove dependencies on external messaging services.
+Remove all messaging-related functionality from the Arogya Sarathi app to simplify the user interface and remove dependencies on external messaging services.
 
 ## Progress Tracking
 

@@ -106,18 +106,39 @@ app.post("/api/patient-response", async (req, res) => {
  */
 app.post("/api/send-doctor-message", async (req, res) => {
   try {
-    const { patientId, doctorId, message } = req.body;
+    const {
+      patientId,
+      doctorId,
+      message,
+      content,
+      doctorName,
+      specialization,
+      doctorSpecialization,
+      type,
+      messageType,
+      timestamp,
+    } = req.body;
 
-    if (!patientId || !message) {
-      return res.status(400).json({ error: "Missing data" });
+    // Accept both `message` and `content` from the frontend payload
+    const resolvedMessage = (message || content || "").toString().trim();
+
+    if (!patientId || !resolvedMessage) {
+      return res.status(400).json({ error: "Missing patientId or message" });
     }
+
+    const resolvedType = type || messageType || "DOCTOR_NOTE";
+    const resolvedSpecialization =
+      doctorSpecialization || specialization || "General Medicine";
 
     const msg = {
       id: `MSG-${Date.now()}`,
       patientId,
       doctorId: doctorId || "DOCTOR",
-      content: message,
-      timestamp: Date.now(),
+      doctorName: doctorName || "Unknown Doctor",
+      specialization: resolvedSpecialization,
+      type: resolvedType,
+      content: resolvedMessage,
+      timestamp: timestamp || Date.now(),
       read: false,
     };
 
@@ -127,8 +148,16 @@ app.post("/api/send-doctor-message", async (req, res) => {
 
     messageStore.get(patientId).push(msg);
 
-    res.json({ success: true });
-  } catch {
+    console.log("💾 Doctor message saved:", {
+      patientId,
+      doctorName: msg.doctorName,
+      type: msg.type,
+      content: resolvedMessage.substring(0, 50) + "...",
+    });
+
+    res.json({ success: true, messageId: msg.id, message: msg });
+  } catch (error) {
+    console.error("❌ Message send failed:", error);
     res.status(500).json({ error: "Message send failed" });
   }
 });
