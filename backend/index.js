@@ -1,71 +1,351 @@
-import "dotenv/config";
 import express from "express";
 import cors from "cors";
-import { speechToText } from "./geminiService.js";
 
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "10mb" }));
 
-app.post("/api/speech-to-text", async (req, res) => {
-  const { audio, language } = req.body;
-  const text = await speechToText(audio, language);
-  res.json({ text });
+/**
+ * MEDICINE REMINDER
+ */
+app.post("/api/medicine-reminder", async (req, res) => {
+  try {
+    const { patientId, medicineName, time } = req.body;
+
+    res.json({
+      message: `Reminder set for ${medicineName} at ${time}`,
+      patientId,
+    });
+  } catch {
+    res.status(500).json({ error: "Reminder setup failed" });
+  }
 });
+
+/**
+ * MEDICINE ORDERING (OPTIONAL)
+ */
+app.post("/api/order-medicine", async (req, res) => {
+  try {
+    const { patientId, medicines } = req.body;
+
+    res.json({
+      status: "Order placed",
+      patientId,
+      medicines,
+    });
+  } catch {
+    res.status(500).json({ error: "Order failed" });
+  }
+});
+
+/**
+ * EMERGENCY – DEMO HOSPITAL ROUTING
+ */
+app.post("/api/find-hospital", async (req, res) => {
+  res.json({
+    hospitals: [
+      {
+        name: "District Government Hospital",
+        distance: "3.2 km",
+        route: "Via Main Road",
+      },
+      {
+        name: "Community Health Center",
+        distance: "5.1 km",
+        route: "Via Village Road",
+      },
+    ],
+  });
+});
+
+/**
+ * PATIENT–DOCTOR MESSAGING SYSTEM
+ */
+
+// In-memory storage
+const messageStore = new Map();
+
+/**
+ * Generate patient response (doctor note / prescription)
+ */
+app.post("/api/patient-response", async (req, res) => {
+  try {
+    const { note, medication, language } = req.body;
+
+    let responseText = "";
+    let icons = [];
+
+    if (medication && medication.trim()) {
+      responseText = `Take ${medication} as prescribed. Complete the full course.`;
+      icons = ["SUN", "MOON", "FOOD"];
+    } else if (note && note.trim()) {
+      responseText = `${note} Please rest and stay hydrated.`;
+      icons = ["SUN"];
+    } else {
+      responseText =
+        "Please follow the prescribed treatment and contact us if symptoms persist.";
+      icons = ["SUN"];
+    }
+
+    res.json({
+      text: responseText,
+      icons,
+      language: language || "English",
+      status: "success",
+    });
+  } catch (err) {
+    res.status(500).json({
+      error: "Failed to generate response",
+      status: "error",
+    });
+  }
+});
+
+/**
+ * Send doctor message
+ */
+app.post("/api/send-doctor-message", async (req, res) => {
+  try {
+    const { patientId, doctorId, message } = req.body;
+
+    if (!patientId || !message) {
+      return res.status(400).json({ error: "Missing data" });
+    }
+
+    const msg = {
+      id: `MSG-${Date.now()}`,
+      patientId,
+      doctorId: doctorId || "DOCTOR",
+      content: message,
+      timestamp: Date.now(),
+      read: false,
+    };
+
+    if (!messageStore.has(patientId)) {
+      messageStore.set(patientId, []);
+    }
+
+    messageStore.get(patientId).push(msg);
+
+    res.json({ success: true });
+  } catch {
+    res.status(500).json({ error: "Message send failed" });
+  }
+});
+
+/**
+ * Get patient messages
+ */
+app.get("/api/get-patient-messages", async (req, res) => {
+  const { patientId } = req.query;
+
+  if (!patientId) {
+    return res.status(400).json({ error: "Missing patientId" });
+  }
+
+  const messages = messageStore.get(patientId) || [];
+  res.json({ messages });
+});
+
+/**
+ * Mark message read
+ */
+app.post("/api/mark-message-read", async (req, res) => {
+  const { patientId, messageId } = req.body;
+
+  const messages = messageStore.get(patientId) || [];
+  const msg = messages.find((m) => m.id === messageId);
+
+  if (msg) {
+    msg.read = true;
+    msg.readAt = Date.now();
+  }
+
+  res.json({ success: true });
+});
+
+/**
+ * Unread count
+ */
+app.get("/api/get-unread-count", async (req, res) => {
+  const { patientId } = req.query;
+
+  const messages = messageStore.get(patientId) || [];
+  const unreadCount = messages.filter((m) => !m.read).length;
+
+  res.json({ unreadCount });
+});
+
+/**
+ * RURAL SYNC PACKET STORAGE & RETRIEVAL
+ * Low-bandwidth delta-sync model for doctors
+ */
+
+// WARNING: In-memory storage is volatile and will be lost on server restart.
+// For production, replace with a persistent database (e.g., Redis, MongoDB, or a SQL database).
+const syncPacketStore = new Map();
+
+/**
+ * Use real patient context from vault data - NO DEMO DATA GENERATION
+ */
+function useRealPatientContext(vault) {
+  // Validate that we have essential patient data
+  if (!vault || !vault.name || !vault.age || vault.age <= 0) {
+    console.log("⚠️ Missing essential patient data:", {
+      hasVault: !!vault,
+      hasName: !!vault?.name,
+      hasAge: !!vault?.age,
+    });
+    return null;
+  }
+
+  console.log("✅ Using real patient data:", {
+    name: vault.name,
+    age: vault.age,
+    location: vault.location,
+    state: vault.state,
+    phoneNumber: vault.phoneNumber,
+    district: vault.district,
+  });
+
+  // Use actual vault data, no demo generation
+  return {
+    // Complete real patient demographic information
+    name: vault.name,
+    age: vault.age,
+    phoneNumber: vault.phoneNumber || "",
+    houseNumber: vault.houseNumber || "",
+    streetVillage: vault.streetVillage || vault.location || "",
+    district: vault.district || "",
+    state: vault.state || "",
+    language: vault.language || "English",
+
+    // Real medical data if available, otherwise empty arrays
+    medicalHistory: vault.medicalHistory || [],
+    currentMedications: vault.currentMedications || [],
+    activeReminders: vault.activeReminders || 0,
+    previousInteractions: vault.previousInteractions || 0,
+
+    // Real emergency contact if available
+    emergencyContact: vault.emergencyContact || {
+      name: "",
+      phone: vault.phoneNumber || "",
+      relationship: "Primary Contact",
+    },
+
+    // Real risk factors if available
+    riskFactors: vault.riskFactors || [],
+    allergies: vault.allergies || [],
+  };
+}
+
+/**
+ * Store sync packet when patient submits symptoms
+ */
 app.post("/api/delta-sync", async (req, res) => {
   try {
-    const { vault, newSymptoms } = req.body;
+    const { vault, newSymptoms, currentSymptoms } = req.body;
 
-    console.log("📦 Delta sync POST received:", { vault, newSymptoms });
+    // 🔐 Safety check
+    if (!vault || !newSymptoms) {
+      return res.status(400).json({
+        error: "Missing vault or symptoms data",
+      });
+    }
 
-    // Process symptoms and create meaningful medical summary
+    console.log("📦 Delta sync received:", {
+      vault: { name: vault.name, age: vault.age },
+      newSymptoms,
+      hasCurrentSymptoms: !!currentSymptoms,
+    });
+
     let suggestedSpecialty = "General Medicine";
-    let urgency = "MEDIUM";
-    let summary = newSymptoms;
+    let urgency = "NORMAL";
 
-    // Basic AI routing logic based on symptoms
     const symptomLower = newSymptoms.toLowerCase();
-    if (
-      symptomLower.includes("chest") ||
-      symptomLower.includes("heart") ||
-      symptomLower.includes("pain chest")
-    ) {
+
+    if (symptomLower.includes("chest") || symptomLower.includes("heart")) {
       suggestedSpecialty = "Cardiology";
       urgency = "HIGH";
-    } else if (
-      symptomLower.includes("skin") ||
-      symptomLower.includes("rash") ||
-      symptomLower.includes("itch")
-    ) {
+    } else if (symptomLower.includes("skin") || symptomLower.includes("rash")) {
       suggestedSpecialty = "Dermatology";
     } else if (
       symptomLower.includes("bone") ||
-      symptomLower.includes("joint") ||
-      symptomLower.includes("back pain")
+      symptomLower.includes("joint")
     ) {
       suggestedSpecialty = "Orthopedics";
     } else if (
       symptomLower.includes("child") ||
-      symptomLower.includes("baby") ||
-      symptomLower.includes("pediatric")
+      symptomLower.includes("baby")
     ) {
       suggestedSpecialty = "Pediatrics";
     } else if (
-      symptomLower.includes("woman") ||
       symptomLower.includes("pregnancy") ||
       symptomLower.includes("gynec")
     ) {
       suggestedSpecialty = "Gynaecology";
     }
 
-    // Create summary based on patient context
-    summary = `Patient ${vault.name} (${vault.age}y, ${vault.location}, ${vault.state}) reports: ${symptoms}`;
+    // Use real patient context from vault data
+    const realPatientContext = useRealPatientContext(vault);
+
+    // Validate that we have essential patient data before creating sync packet
+    if (!realPatientContext) {
+      return res.status(400).json({
+        error:
+          "Incomplete patient profile. Please ensure patient name and age are provided.",
+      });
+    }
+
+    console.log("📦 Creating sync packet with real patient data:", {
+      patientName: realPatientContext.name,
+      patientAge: realPatientContext.age,
+      patientLocation: realPatientContext.streetVillage,
+      patientState: realPatientContext.state,
+    });
+
+    // Create sync packet with REAL patient data - no demo generation
+    const syncPacket = {
+      packetId: `PKT-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      patientId:
+        vault.patientId ||
+        `PATIENT_${realPatientContext.name}_${realPatientContext.age}`,
+      patientName: realPatientContext.name,
+      payloadSize: `${Math.ceil(newSymptoms.length / 100)}KB`,
+      summary: `Patient ${realPatientContext.name} (${realPatientContext.age}y, ${realPatientContext.streetVillage}, ${realPatientContext.state}) reports: ${newSymptoms}`,
+      historyContext: `Resident of ${realPatientContext.streetVillage}, ${realPatientContext.state}`,
+      suggestedSpecialty: suggestedSpecialty,
+      urgency: urgency,
+      timestamp: Date.now(),
+      // REAL patient context for comprehensive doctor view
+      patientContext: realPatientContext,
+      // Current symptoms with detailed information
+      currentSymptoms: currentSymptoms || {
+        description: newSymptoms,
+        severity: urgency === "HIGH" ? "HIGH" : "MEDIUM",
+        duration: "Current episode",
+        additionalNotes: "Patient submitted via mobile app",
+      },
+    };
+
+    // Store packet in backend memory
+    syncPacketStore.set(syncPacket.packetId, syncPacket);
+
+    console.log("💾 Real patient sync packet stored:", {
+      packetId: syncPacket.packetId,
+      patientName: syncPacket.patientName,
+      patientAge: syncPacket.patientContext.age,
+      patientLocation: syncPacket.patientContext.streetVillage,
+      patientContext: !!syncPacket.patientContext,
+      currentSymptoms: !!syncPacket.currentSymptoms,
+    });
 
     res.json({
-      summary: summary,
-      urgency: urgency,
-      packetSize: `${Math.ceil(symptoms.length / 100)}KB`,
-      suggestedSpecialty: suggestedSpecialty,
+      summary: `Patient ${realPatientContext.name} (${realPatientContext.age}y, ${realPatientContext.streetVillage}, ${realPatientContext.state}) reports: ${newSymptoms}`,
+      urgency,
+      suggestedSpecialty,
+      packetSize: syncPacket.payloadSize,
+      patientId: syncPacket.patientId,
     });
   } catch (err) {
     console.error("❌ Delta sync error:", err);
@@ -73,68 +353,78 @@ app.post("/api/delta-sync", async (req, res) => {
   }
 });
 
-app.post("/api/visual-triage", async (req, res) => {
+/**
+ * Fetch sync packets for doctor dashboard
+ * Supports polling for low-bandwidth scenarios
+ */
+app.get("/api/fetch-sync-packets", async (req, res) => {
   try {
-    const { image } = req.body;
-    console.log("📷 Visual triage received");
+    const { specialty, lastPacketId } = req.query;
 
-    // Simulate AI visual analysis
-    const findings = "Visual inspection suggests routine assessment needed";
-    const urgency = "MEDIUM";
+    let packets = Array.from(syncPacketStore.values());
+
+    // Filter by specialty if specified
+    if (specialty) {
+      packets = packets.filter((p) => p.suggestedSpecialty === specialty);
+    }
+
+    // Sort by timestamp (newest first)
+    packets.sort((a, b) => b.timestamp - a.timestamp);
+
+    // Return packets after the lastPacketId if provided (for incremental sync)
+    if (lastPacketId) {
+      const lastIndex = packets.findIndex((p) => p.packetId === lastPacketId);
+      if (lastIndex >= 0) {
+        packets = packets.slice(0, lastIndex);
+      }
+    }
+
+    console.log(
+      `📡 Returning ${packets.length} sync packets for specialty: ${
+        specialty || "ALL"
+      }`
+    );
 
     res.json({
-      findings: findings,
-      urgency: urgency,
+      packets: packets,
+      totalCount: syncPacketStore.size,
+      lastSync: Date.now(),
     });
   } catch (err) {
-    console.error("❌ Visual triage error:", err);
-    res.status(500).json({ error: "Visual triage failed" });
+    console.error("❌ Fetch sync packets error:", err);
+    res.status(500).json({ error: "Failed to fetch sync packets" });
   }
 });
 
-app.post("/api/patient-response", async (req, res) => {
+/**
+ * Mark packet as processed by doctor
+ */
+app.post("/api/mark-packet-processed", async (req, res) => {
   try {
-    const { note, medication, language } = req.body;
-    console.log("💊 Patient response generated");
+    const { packetId, doctorId } = req.body;
 
-    // Simulate AI response generation
-    let text = note;
-    let icons = [];
+    if (!packetId) {
+      return res.status(400).json({ error: "Missing packetId" });
+    }
 
-    if (medication) {
-      text = `Please take ${medication} as prescribed. ${note}`;
-      // Add appropriate icons based on medication timing
-      icons.push("SUN");
-      icons.push("MOON");
-    } else {
-      text = note;
+    // Remove packet from store after processing
+    if (syncPacketStore.has(packetId)) {
+      syncPacketStore.delete(packetId);
+      console.log("✅ Packet marked as processed:", packetId);
     }
 
     res.json({
-      text: text,
-      icons: icons,
+      success: true,
+      processedBy: doctorId || "DOCTOR",
     });
   } catch (err) {
-    console.error("❌ Patient response error:", err);
-    res.status(500).json({ error: "Patient response failed" });
-  }
-});
-
-app.post("/api/text-to-speech", async (req, res) => {
-  try {
-    const { text } = req.body;
-    console.log("🔊 Text-to-speech request");
-
-    // For demo purposes, return null (no actual audio generation)
-    // In production, this would integrate with TTS service
-    res.json({ audio: null });
-  } catch (err) {
-    console.error("❌ Text-to-speech error:", err);
-    res.status(500).json({ error: "Text-to-speech failed" });
+    console.error("❌ Mark packet processed error:", err);
+    res.status(500).json({ error: "Failed to mark packet as processed" });
   }
 });
 
 app.listen(4000, () => {
-  console.log("Backend running on port 4000");
+  console.log("✅ Backend running on port 4000");
+  console.log("📡 Rural Sync & Messaging Ready");
+  console.log("📋 Sync Packet Storage: Active");
 });
-// console.log("Gemini Key Loaded:", !!process.env.GEMINI_API_KEY);

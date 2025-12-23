@@ -58,6 +58,7 @@ import {
   DoctorProfile,
   PharmacyProfile,
   SupportedLanguage,
+  DemoPatientProfile,
 } from "./types";
 import { ConnectivitySim } from "./components/ConnectivitySim";
 import EmergencyHospitalFinder from "./components/EmergencyHospitalFinder";
@@ -165,11 +166,16 @@ const App: React.FC = () => {
 
   // Data State - Initialize as empty, load after patient selection
   const [vault, setVault] = useState<PatientVault>({
+    patientId: "",
     name: "",
     age: 0,
     location: "",
     state: "",
     language: "English",
+    phoneNumber: "",
+    houseNumber: "",
+    streetVillage: "",
+    district: "",
     records: [],
   });
 
@@ -189,7 +195,7 @@ const App: React.FC = () => {
   const [activeCase, setActiveCase] = useState<SyncPacket | null>(null);
   const [showQR, setShowQR] = useState(false);
   const [isPlaying, setIsPlaying] = useState<string | null>(null);
-  const [whatsappNotify, setWhatsappNotify] = useState<string | null>(null);
+
   const [doctorMedInput, setDoctorMedInput] = useState("");
   const [doctorNoteInput, setDoctorNoteInput] = useState("");
   const [showEmergencyHospitalFinder, setShowEmergencyHospitalFinder] =
@@ -199,6 +205,8 @@ const App: React.FC = () => {
   const [activePatientTab, setActivePatientTab] = useState<
     "symptoms" | "responses" | "emergency"
   >("symptoms");
+  const [unreadMessageCount, setUnreadMessageCount] = useState(0);
+  const [whatsappNotify, setWhatsappNotify] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -212,6 +220,7 @@ const App: React.FC = () => {
         "syncPool"
       );
       localStorage.setItem(syncKey, JSON.stringify(syncPool));
+      console.log("💾 Sync pool saved for patient:", patientProfile.patientId);
     }
   }, [syncPool, patientProfile]);
 
@@ -219,31 +228,85 @@ const App: React.FC = () => {
     if (patientProfile) {
       const vaultKey = getPatientStorageKey(patientProfile.patientId, "vault");
       localStorage.setItem(vaultKey, JSON.stringify(vault));
+      console.log("💾 Vault saved for patient:", patientProfile.patientId);
     }
   }, [vault, patientProfile]);
 
-  // Patient profiles management
+  // Patient profiles management - Enhanced for better persistence
   useEffect(() => {
     if (patientProfile) {
+      // Save current patient profile separately for easy restoration
+      localStorage.setItem(
+        "hv_current_patient_profile",
+        JSON.stringify(patientProfile)
+      );
+      console.log("💾 Current patient profile saved:", patientProfile.name);
+
+      // Update available patients list
+      const updatedPatients = availablePatients.map((p) =>
+        p.patientId === patientProfile.patientId ? patientProfile : p
+      );
+
+      // If patient doesn't exist in availablePatients, add them
+      if (
+        !availablePatients.find((p) => p.patientId === patientProfile.patientId)
+      ) {
+        updatedPatients.push(patientProfile);
+      }
+
       localStorage.setItem(
         "hv_patient_profiles",
-        JSON.stringify(availablePatients)
+        JSON.stringify(updatedPatients)
       );
+      console.log("💾 Patient profiles list updated:", updatedPatients.length);
     }
   }, [availablePatients, patientProfile]);
 
-  // Initialize patient profile from available patients
+  // Initialize patient profile from localStorage on app startup
   useEffect(() => {
-    if (
-      userRole === "PATIENT" &&
-      availablePatients.length > 0 &&
-      !patientProfile
-    ) {
-      // Auto-select the first available patient
-      console.log("🔄 Auto-selecting first available patient");
-      setPatientProfile(availablePatients[0]);
+    if (userRole === "PATIENT") {
+      console.log("🔄 Initializing patient session...");
+
+      // First, try to restore the current patient profile
+      const savedProfile = localStorage.getItem("hv_current_patient_profile");
+      const savedPatients = localStorage.getItem("hv_patient_profiles");
+
+      if (savedProfile) {
+        try {
+          const profile = JSON.parse(savedProfile);
+          console.log("✅ Restored patient profile:", profile.name);
+          setPatientProfile(profile);
+        } catch (error) {
+          console.error("❌ Error parsing saved patient profile:", error);
+          localStorage.removeItem("hv_current_patient_profile");
+        }
+      }
+
+      if (savedPatients) {
+        try {
+          const patients = JSON.parse(savedPatients);
+          console.log("✅ Restored patient profiles list:", patients.length);
+          setAvailablePatients(patients);
+        } catch (error) {
+          console.error("❌ Error parsing saved patient profiles:", error);
+          localStorage.removeItem("hv_patient_profiles");
+        }
+      }
+
+      // If no saved profile but we have available patients, auto-select first
+      if (!patientProfile && availablePatients.length > 0) {
+        console.log("🔄 Auto-selecting first available patient");
+        setPatientProfile(availablePatients[0]);
+      }
+
+      // If no saved profile and no available patients, ensure patient profile is null
+      if (!patientProfile && availablePatients.length === 0) {
+        console.log(
+          "📝 No patient data found - will require patient onboarding"
+        );
+      }
     }
-  }, [userRole, availablePatients, patientProfile]);
+  }, [userRole]);
 
   // Load patient data when patient profile changes
   useEffect(() => {
@@ -256,13 +319,18 @@ const App: React.FC = () => {
       if (savedVault) {
         setVault(JSON.parse(savedVault));
       } else {
-        // Initialize with patient profile data
+        // Initialize with patient profile data (include all fields for doctor view)
         setVault({
+          patientId: patientProfile.patientId,
           name: patientProfile.name,
           age: patientProfile.age,
           location: patientProfile.location,
           state: patientProfile.state,
           language: patientProfile.language,
+          phoneNumber: patientProfile.phoneNumber,
+          houseNumber: patientProfile.houseNumber,
+          streetVillage: patientProfile.streetVillage,
+          district: patientProfile.district,
           records: [],
         });
       }
@@ -288,14 +356,62 @@ const App: React.FC = () => {
   const handleLogout = useCallback(() => {
     console.log("🚪 Logging out and clearing all session data");
 
+    // Stop background services first
+    if (patientProfile) {
+      reminderService.stopAllReminderChecks();
+      console.log(
+        "🛑 Stopped reminder service for patient:",
+        patientProfile.patientId
+      );
+    }
+
+    // Clear patient-specific data
+    if (patientProfile) {
+      const patientKeysToRemove = [
+        getPatientStorageKey(patientProfile.patientId, "vault"),
+        getPatientStorageKey(patientProfile.patientId, "syncPool"),
+      ];
+      patientKeysToRemove.forEach((key) => {
+        localStorage.removeItem(key);
+        console.log("🗑️ Removed patient data key:", key);
+      });
+    }
+
+    // Clear all HealthVault-related global data
+    const keysToRemove = [
+      "hv_patient_profiles",
+      "hv_user_role",
+      "hv_patient_profile",
+      "hv_doctor_profile",
+      "hv_pharmacy_profile",
+    ];
+    keysToRemove.forEach((key) => {
+      localStorage.removeItem(key);
+      console.log("🗑️ Removed global data key:", key);
+    });
+
+    // Clear all other HealthVault keys as backup
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith("hv_")) {
+        localStorage.removeItem(key);
+        console.log("🗑️ Removed backup HealthVault key:", key);
+      }
+    }
+
     // Clear all patient-related state
     setPatientProfile(null);
     setVault({
+      patientId: "",
       name: "",
       age: 0,
       location: "",
       state: "",
       language: "English",
+      phoneNumber: "",
+      houseNumber: "",
+      streetVillage: "",
+      district: "",
       records: [],
     });
     setSyncPool([]);
@@ -318,16 +434,6 @@ const App: React.FC = () => {
     setShowMedicineReminder(false);
     setShowMedicineOrdering(false);
 
-    // Clear all localStorage related to HealthVault
-    const keysToRemove = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key && key.startsWith("hv_")) {
-        keysToRemove.push(key);
-      }
-    }
-    keysToRemove.forEach((key) => localStorage.removeItem(key));
-
     // Clear session storage
     sessionStorage.clear();
 
@@ -335,17 +441,22 @@ const App: React.FC = () => {
     setUserRole(null);
 
     console.log("✅ Complete logout and session reset completed");
-  }, []);
+  }, [patientProfile]);
 
   // Clear current patient data for switching
   const clearCurrentPatientData = useCallback(() => {
     console.log("🧹 Clearing current patient data");
     setVault({
+      patientId: "",
       name: "",
       age: 0,
       location: "",
       state: "",
       language: "English",
+      phoneNumber: "",
+      houseNumber: "",
+      streetVillage: "",
+      district: "",
       records: [],
     });
     setSyncPool([]);
@@ -412,7 +523,7 @@ const App: React.FC = () => {
     };
   }, []);
 
-  // Background Sync Logic
+  // Background Sync Logic - send to backend for storage
   const triggerSync = useCallback(async () => {
     if (isSyncing || userRole !== "PATIENT") return;
 
@@ -460,32 +571,37 @@ const App: React.FC = () => {
 
       console.log("🩺 Symptoms to sync:", symptomsText);
 
-      if (symptomsText) {
+      if (symptomsText && patientProfile) {
+        // Ensure vault has complete patient data before syncing
+        const completeVault = {
+          ...vault,
+          patientId: patientProfile.patientId,
+          name: patientProfile.name,
+          age: patientProfile.age,
+          location: patientProfile.location,
+          state: patientProfile.state,
+          language: patientProfile.language,
+          phoneNumber: patientProfile.phoneNumber,
+          houseNumber: patientProfile.houseNumber,
+          streetVillage: patientProfile.streetVillage,
+          district: patientProfile.district,
+        };
+
+        console.log("📦 Creating sync packet with real patient data:", {
+          patientName: patientProfile.name,
+          patientAge: patientProfile.age,
+          patientLocation: patientProfile.location,
+        });
+
         const delta = await processingService.generateDeltaSync(
-          vault,
+          completeVault,
           symptomsText
         );
 
-        console.log("✅ Delta sync response:", delta);
+        console.log("✅ Delta sync sent to backend:", delta);
 
-        const newPacket: SyncPacket = {
-          packetId: `PKT-${Math.floor(Math.random() * 10000)}`,
-          patientId: patientProfile?.patientId || "UNKNOWN_PATIENT",
-          patientName: vault.name,
-          payloadSize: delta.packetSize || "8KB",
-          summary: delta.summary,
-          historyContext: `Resident of ${vault.location}, ${vault.state}`,
-          visualTriage: visualSummary,
-          suggestedSpecialty: delta.suggestedSpecialty,
-          timestamp: Date.now(),
-        };
-
-        console.log("📦 Creating new sync packet:", newPacket);
-        setSyncPool((prev) => {
-          const updated = [newPacket, ...prev];
-          console.log("🔄 Updated sync pool:", updated);
-          return updated;
-        });
+        // Note: sync packets are now stored in backend, not locally
+        // Doctors will fetch them from the backend
       }
 
       setVault((prev) => ({
@@ -510,6 +626,31 @@ const App: React.FC = () => {
     vault.location,
     vault.state,
   ]);
+
+  // Doctor: Fetch sync packets from backend
+  useEffect(() => {
+    if (userRole === "DOCTOR" && doctorProfile) {
+      const fetchPackets = async () => {
+        try {
+          // Pull all packets and highlight matches locally so doctors don't miss cross-specialty cases
+          const packets = await processingService.fetchSyncPackets();
+          setSyncPool(packets);
+          console.log(
+            `📡 Fetched ${packets.length} sync packets for ${doctorProfile.specialization}`
+          );
+        } catch (error) {
+          console.error("Failed to fetch sync packets:", error);
+        }
+      };
+
+      // Initial fetch
+      fetchPackets();
+
+      // Poll every 10 seconds for new packets
+      const interval = setInterval(fetchPackets, 10000);
+      return () => clearInterval(interval);
+    }
+  }, [userRole, doctorProfile]);
 
   useEffect(() => {
     if (network !== ConnectivityState.OFFLINE) {
@@ -539,10 +680,7 @@ const App: React.FC = () => {
           const base64 = (reader.result as string).split(",")[1];
           setIsTranscribing(true);
           try {
-            const transcribed = await processingService.speechToText(
-              base64,
-              patientProfile?.language || "English"
-            );
+            const transcribed = await processingService.speechToText(base64);
             if (userRole === "PATIENT")
               setNewSymptom((prev) =>
                 prev ? `${prev} ${transcribed}` : transcribed
@@ -625,6 +763,18 @@ const App: React.FC = () => {
     reader.readAsDataURL(file);
   };
 
+  // Calculate unread message count from local records
+  useEffect(() => {
+    if (userRole === "PATIENT" && patientProfile) {
+      const doctorRecords = vault.records.filter(
+        (record) =>
+          record.type === "PRESCRIPTION" || record.type === "DOCTOR_NOTE"
+      );
+      // For now, just show total count since we don't have read/unread status
+      setUnreadMessageCount(doctorRecords.length);
+    }
+  }, [userRole, patientProfile, vault.records]);
+
   const handleDoctorSubmit = async () => {
     if (!activeCase || (!doctorMedInput.trim() && !doctorNoteInput.trim()))
       return;
@@ -633,11 +783,25 @@ const App: React.FC = () => {
       const clinicalContext = doctorNoteInput || "Standard clinical advice.";
       const medication = doctorMedInput || "General health consultation.";
 
-      const { text, icons } = await processingService.generatePatientResponse(
-        clinicalContext,
-        medication,
-        vault.language
+      // Use backend API for patient response
+      const response = await fetch(
+        "http://localhost:4000/api/patient-response",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            note: doctorNoteInput,
+            medication: doctorMedInput,
+            language: patientProfile?.language || "English",
+          }),
+        }
       );
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const response_data = await response.json();
 
       const type = doctorMedInput ? "PRESCRIPTION" : "DOCTOR_NOTE";
 
@@ -651,10 +815,10 @@ const App: React.FC = () => {
         content: doctorMedInput
           ? `RX: ${medication}`
           : `Advice: ${doctorNoteInput}`,
-        translatedContent: text,
+        translatedContent: response_data.text,
         timestamp: Date.now(),
         status: "SYNCED",
-        icons: icons as any,
+        icons: response_data.icons as any,
         doctorInfo: {
           name: doctorProfile?.name || "Unknown Doctor",
           specialization: doctorProfile?.specialization || "General Medicine",
@@ -676,7 +840,7 @@ const App: React.FC = () => {
           id: `ORD-${Math.floor(Math.random() * 1000)}`,
           patientName: activeCase.patientName,
           medication: medication,
-          instruction: text,
+          instruction: response_data.text,
           timestamp: Date.now(),
           status: "RECEIVED",
           prescribedBy: doctorProfile?.name,
@@ -689,12 +853,22 @@ const App: React.FC = () => {
         setWhatsappNotify(`WhatsApp: Note sent to ${activeCase.patientName}.`);
       }
 
+      // Mark packet as processed on backend
+      await processingService.markPacketProcessed(
+        activeCase.packetId,
+        doctorProfile?.name
+      );
+
       setSyncPool((prev) =>
         prev.filter((p) => p.packetId !== activeCase.packetId)
       );
       setActiveCase(null);
       setDoctorMedInput("");
       setDoctorNoteInput("");
+      setTimeout(() => setWhatsappNotify(null), 5000);
+    } catch (error) {
+      console.error("❌ Error in handleDoctorSubmit:", error);
+      setWhatsappNotify("Error: Failed to send message. Please try again.");
       setTimeout(() => setWhatsappNotify(null), 5000);
     } finally {
       setIsSyncing(false);
@@ -739,235 +913,6 @@ const App: React.FC = () => {
       setPatientProfile(updatedProfile);
       setVault((v) => ({ ...v, ...updatedProfile }));
     }
-  };
-
-  // --- Sub-components for Onboarding ---
-
-  const PatientOnboarding = () => {
-    const [form, setForm] = useState<PatientProfile>({
-      name: "",
-      age: 0,
-      location: "",
-      state: "",
-      language: "English",
-      phoneNumber: "",
-      houseNumber: "",
-      streetVillage: "",
-      district: "",
-    });
-    const handleStateChange = (state: string) => {
-      const autoLang = STATE_LANGUAGE_MAP[state] || "English";
-      setForm((prev) => ({ ...prev, state, language: autoLang }));
-    };
-    const handleSave = () => {
-      // Validate required fields including new ones
-      if (
-        !form.name ||
-        form.age <= 0 ||
-        !form.phoneNumber ||
-        !form.houseNumber ||
-        !form.streetVillage ||
-        !form.district ||
-        !form.state
-      ) {
-        alert("Please fill in all required fields");
-        return;
-      }
-
-      // Validate phone number format
-      if (!/^\d{10}$/.test(form.phoneNumber)) {
-        alert("Please enter a valid 10-digit phone number");
-        return;
-      }
-
-      // Generate unique patient ID using district for better uniqueness
-      const patientId = generatePatientId(form.name, form.age, form.district);
-
-      // Create profile with unique ID
-      const profileWithId = {
-        ...form,
-        patientId,
-        // For backward compatibility, keep location as streetVillage
-        location: form.streetVillage,
-      };
-
-      // Add to available patients and select it
-      setAvailablePatients((prev) => {
-        const updated = [...prev, profileWithId];
-        return updated;
-      });
-      setPatientProfile(profileWithId);
-      setVault((v) => ({ ...v, ...form, location: form.streetVillage }));
-    };
-    return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-indigo-600 p-6">
-        <div className="text-center mb-10 text-white animate-in slide-in-from-top duration-700">
-          <h1 className="text-4xl font-black tracking-tight mb-2">
-            HealthVault AI
-          </h1>
-          <p className="text-indigo-100 font-medium opacity-90">
-            Rural Medical Ledger & Medical Routing
-          </p>
-        </div>
-        <div className="bg-white rounded-[40px] p-8 w-full max-w-lg shadow-2xl space-y-8 animate-in zoom-in duration-500">
-          <div className="space-y-6">
-            <div>
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block px-2">
-                Patient Name
-              </label>
-              <div className="relative">
-                <input
-                  className="w-full bg-slate-50 border border-slate-100 rounded-2xl p-4 pl-12 text-slate-800 font-bold focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
-                  placeholder="Enter Name"
-                  value={form.name}
-                  onChange={(e) => setForm({ ...form, name: e.target.value })}
-                />
-                <UserCircle
-                  className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300"
-                  size={24}
-                />
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block px-2">
-                  Age
-                </label>
-                <input
-                  className="w-full bg-slate-50 border border-slate-100 rounded-2xl p-4 text-slate-800 font-bold focus:ring-2 focus:ring-indigo-500 outline-none"
-                  type="number"
-                  placeholder="Age"
-                  value={form.age || ""}
-                  onChange={(e) =>
-                    setForm({ ...form, age: parseInt(e.target.value) })
-                  }
-                />
-              </div>
-              <div>
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block px-2">
-                  State
-                </label>
-                <select
-                  className="w-full bg-slate-50 border border-slate-100 rounded-2xl p-4 text-slate-800 font-bold focus:ring-2 focus:ring-indigo-500 outline-none appearance-none"
-                  value={form.state}
-                  onChange={(e) => handleStateChange(e.target.value)}
-                >
-                  <option value="">Select State</option>
-                  {Object.keys(STATE_LANGUAGE_MAP).map((s) => (
-                    <option key={s} value={s}>
-                      {s}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-            <div>
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block px-2">
-                Phone Number
-              </label>
-              <div className="relative">
-                <input
-                  className="w-full bg-slate-50 border border-slate-100 rounded-2xl p-4 pl-12 text-slate-800 font-bold focus:ring-2 focus:ring-indigo-500 outline-none"
-                  placeholder="10-digit mobile number"
-                  value={form.phoneNumber}
-                  onChange={(e) =>
-                    setForm({ ...form, phoneNumber: e.target.value })
-                  }
-                />
-                <UserCircle
-                  className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300"
-                  size={24}
-                />
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block px-2">
-                  House Number
-                </label>
-                <input
-                  className="w-full bg-slate-50 border border-slate-100 rounded-2xl p-4 text-slate-800 font-bold focus:ring-2 focus:ring-indigo-500 outline-none"
-                  placeholder="House/Plot No."
-                  value={form.houseNumber}
-                  onChange={(e) =>
-                    setForm({ ...form, houseNumber: e.target.value })
-                  }
-                />
-              </div>
-              <div>
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block px-2">
-                  District
-                </label>
-                <input
-                  className="w-full bg-slate-50 border border-slate-100 rounded-2xl p-4 text-slate-800 font-bold focus:ring-2 focus:ring-indigo-500 outline-none"
-                  placeholder="District Name"
-                  value={form.district}
-                  onChange={(e) =>
-                    setForm({ ...form, district: e.target.value })
-                  }
-                />
-              </div>
-            </div>
-            <div>
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block px-2">
-                Street / Village
-              </label>
-              <div className="relative">
-                <input
-                  className="w-full bg-slate-50 border border-slate-100 rounded-2xl p-4 pl-12 text-slate-800 font-bold focus:ring-2 focus:ring-indigo-500 outline-none"
-                  placeholder="Street or Village Name"
-                  value={form.streetVillage}
-                  onChange={(e) =>
-                    setForm({ ...form, streetVillage: e.target.value })
-                  }
-                />
-                <MapPin
-                  className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300"
-                  size={24}
-                />
-              </div>
-            </div>
-            <div>
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block px-2">
-                State
-              </label>
-              <select
-                className="w-full bg-slate-50 border border-slate-100 rounded-2xl p-4 text-slate-800 font-bold focus:ring-2 focus:ring-indigo-500 outline-none appearance-none"
-                value={form.state}
-                onChange={(e) => handleStateChange(e.target.value)}
-              >
-                <option value="">Select State</option>
-                {Object.keys(STATE_LANGUAGE_MAP).map((s) => (
-                  <option key={s} value={s}>
-                    {s}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block px-2">
-                Native Language
-              </label>
-              <div className="bg-indigo-50 p-4 rounded-2xl flex items-center justify-between border border-indigo-100">
-                <div className="flex items-center gap-2 text-indigo-700 font-black uppercase text-xs">
-                  <Languages size={18} />
-                  <span>{form.language}</span>
-                </div>
-                <span className="text-[9px] font-bold text-indigo-400 uppercase">
-                  State-Linked
-                </span>
-              </div>
-            </div>
-          </div>
-          <button
-            onClick={handleSave}
-            className="w-full bg-indigo-600 text-white py-5 rounded-3xl font-black uppercase tracking-[0.2em] shadow-xl shadow-indigo-100 flex items-center justify-center gap-3 hover:bg-indigo-700 active:scale-95 transition-all"
-          >
-            <ArrowRight size={20} /> Initialize Medical Vault
-          </button>
-        </div>
-      </div>
-    );
   };
 
   const DoctorOnboarding = () => {
@@ -1134,6 +1079,208 @@ const App: React.FC = () => {
             className="w-full bg-amber-600 text-white py-5 rounded-3xl font-black uppercase tracking-[0.2em] shadow-xl shadow-amber-100 flex items-center justify-center gap-3 hover:bg-amber-700 active:scale-95 transition-all"
           >
             <ArrowRight size={20} /> Initialize Fulfillment Hub
+          </button>
+        </div>
+      </div>
+    );
+  };
+
+  const PatientOnboarding = () => {
+    const [form, setForm] = useState<PatientProfile>({
+      patientId: "",
+      name: "",
+      age: 0,
+      location: "",
+      state: "",
+      language: "English",
+      phoneNumber: "",
+      houseNumber: "",
+      streetVillage: "",
+      district: "",
+    });
+    const handleSave = () => {
+      if (!form.name || !form.age || !form.state || !form.district) return;
+
+      // Generate patient ID if not present
+      const patientId =
+        form.patientId || generatePatientId(form.name, form.age, form.location);
+
+      const newPatient: PatientProfile = {
+        ...form,
+        patientId,
+      };
+
+      // Add to available patients if not already present
+      setAvailablePatients((prev) => {
+        const exists = prev.find((p) => p.patientId === patientId);
+        if (exists) return prev;
+        return [...prev, newPatient];
+      });
+
+      // Set as current patient
+      setPatientProfile(newPatient);
+    };
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen bg-indigo-600 p-6">
+        <div className="text-center mb-10 text-white animate-in slide-in-from-top duration-700">
+          <h1 className="text-4xl font-black tracking-tight mb-2">
+            HealthVault Patient
+          </h1>
+          <p className="text-indigo-100 font-medium opacity-90">
+            Secure Medical Vault Setup
+          </p>
+        </div>
+        <div className="bg-white rounded-[40px] p-8 w-full max-w-lg shadow-2xl space-y-8 animate-in zoom-in duration-500">
+          <div className="space-y-6">
+            <div>
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block px-2">
+                Full Name
+              </label>
+              <div className="relative">
+                <input
+                  className="w-full bg-slate-50 border border-slate-100 rounded-2xl p-4 pl-12 text-slate-800 font-bold focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                  placeholder="Enter Your Name"
+                  value={form.name}
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                />
+                <User
+                  className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300"
+                  size={24}
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block px-2">
+                  Age
+                </label>
+                <input
+                  type="number"
+                  className="w-full bg-slate-50 border border-slate-100 rounded-2xl p-4 text-slate-800 font-bold focus:ring-2 focus:ring-indigo-500 outline-none"
+                  placeholder="Age"
+                  value={form.age || ""}
+                  onChange={(e) =>
+                    setForm({ ...form, age: parseInt(e.target.value) || 0 })
+                  }
+                />
+              </div>
+              <div>
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block px-2">
+                  Phone Number
+                </label>
+                <input
+                  className="w-full bg-slate-50 border border-slate-100 rounded-2xl p-4 text-slate-800 font-bold focus:ring-2 focus:ring-indigo-500 outline-none"
+                  placeholder="+91 XXXXX XXXXX"
+                  value={form.phoneNumber}
+                  onChange={(e) =>
+                    setForm({ ...form, phoneNumber: e.target.value })
+                  }
+                />
+              </div>
+            </div>
+            <div>
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block px-2">
+                House Number
+              </label>
+              <input
+                className="w-full bg-slate-50 border border-slate-100 rounded-2xl p-4 text-slate-800 font-bold focus:ring-2 focus:ring-indigo-500 outline-none"
+                placeholder="House/Flat Number"
+                value={form.houseNumber}
+                onChange={(e) =>
+                  setForm({ ...form, houseNumber: e.target.value })
+                }
+              />
+            </div>
+            <div>
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block px-2">
+                Street/Village
+              </label>
+              <input
+                className="w-full bg-slate-50 border border-slate-100 rounded-2xl p-4 text-slate-800 font-bold focus:ring-2 focus:ring-indigo-500 outline-none"
+                placeholder="Street Name or Village"
+                value={form.streetVillage}
+                onChange={(e) =>
+                  setForm({ ...form, streetVillage: e.target.value })
+                }
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block px-2">
+                  District
+                </label>
+                <input
+                  className="w-full bg-slate-50 border border-slate-100 rounded-2xl p-4 text-slate-800 font-bold focus:ring-2 focus:ring-indigo-500 outline-none"
+                  placeholder="District Name"
+                  value={form.district}
+                  onChange={(e) =>
+                    setForm({ ...form, district: e.target.value })
+                  }
+                />
+              </div>
+              <div>
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block px-2">
+                  State
+                </label>
+                <select
+                  className="w-full bg-slate-50 border border-slate-100 rounded-2xl p-4 text-slate-800 font-bold focus:ring-2 focus:ring-indigo-500 outline-none appearance-none"
+                  value={form.state}
+                  onChange={(e) => {
+                    const newState = e.target.value;
+                    setForm({
+                      ...form,
+                      state: newState,
+                      language: STATE_LANGUAGE_MAP[newState] || "English",
+                    });
+                  }}
+                >
+                  <option value="">Select State</option>
+                  <option value="Telangana">Telangana</option>
+                  <option value="Andhra Pradesh">Andhra Pradesh</option>
+                  <option value="Maharashtra">Maharashtra</option>
+                  <option value="Karnataka">Karnataka</option>
+                  <option value="West Bengal">West Bengal</option>
+                  <option value="Tamil Nadu">Tamil Nadu</option>
+                  <option value="Bihar">Bihar</option>
+                  <option value="Uttar Pradesh">Uttar Pradesh</option>
+                  <option value="Madhya Pradesh">Madhya Pradesh</option>
+                  <option value="Rajasthan">Rajasthan</option>
+                  <option value="Gujarat">Gujarat</option>
+                  <option value="Kerala">Kerala</option>
+                </select>
+              </div>
+            </div>
+            <div>
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block px-2">
+                Preferred Language
+              </label>
+              <select
+                className="w-full bg-slate-50 border border-slate-100 rounded-2xl p-4 text-slate-800 font-bold focus:ring-2 focus:ring-indigo-500 outline-none appearance-none"
+                value={form.language}
+                onChange={(e) =>
+                  setForm({
+                    ...form,
+                    language: e.target.value as SupportedLanguage,
+                  })
+                }
+              >
+                {Object.values(STATE_LANGUAGE_MAP)
+                  .filter((v, i, a) => a.indexOf(v) === i)
+                  .map((lang) => (
+                    <option key={lang} value={lang}>
+                      {lang}
+                    </option>
+                  ))}
+                <option value="English">English</option>
+                <option value="Swahili">Swahili</option>
+              </select>
+            </div>
+          </div>
+          <button
+            onClick={handleSave}
+            className="w-full bg-indigo-600 text-white py-5 rounded-3xl font-black uppercase tracking-[0.2em] shadow-xl shadow-indigo-100 flex items-center justify-center gap-3 hover:bg-indigo-700 active:scale-95 transition-all"
+          >
+            <ArrowRight size={20} /> Initialize Patient Vault
           </button>
         </div>
       </div>
@@ -1474,7 +1621,7 @@ const App: React.FC = () => {
                 </button>
                 <button
                   onClick={() => setActivePatientTab("responses")}
-                  className={`flex-1 py-4 px-6 rounded-3xl font-bold text-sm uppercase tracking-widest transition-all ${
+                  className={`flex-1 py-4 px-6 rounded-3xl font-bold text-sm uppercase tracking-widest transition-all relative ${
                     activePatientTab === "responses"
                       ? "bg-emerald-600 text-white shadow-lg"
                       : "text-slate-600 hover:bg-slate-50"
@@ -1482,6 +1629,11 @@ const App: React.FC = () => {
                 >
                   <MessageCircle size={18} className="inline mr-2" />
                   Doctor Responses
+                  {unreadMessageCount > 0 && (
+                    <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs font-bold rounded-full w-6 h-6 flex items-center justify-center">
+                      {unreadMessageCount}
+                    </span>
+                  )}
                 </button>
                 <button
                   onClick={() => setActivePatientTab("emergency")}
@@ -1787,9 +1939,16 @@ const App: React.FC = () => {
             {activePatientTab === "responses" && (
               <div className="space-y-4">
                 {/* Doctor Messages Section */}
-                <div className="flex items-center gap-2 px-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                  <Stethoscope size={14} /> <span>Doctor Responses</span>
+                <div className="flex items-center justify-between px-4">
+                  <div className="flex items-center gap-2 text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                    <Stethoscope size={14} /> <span>Doctor Responses</span>
+                  </div>
+                  <div className="text-[9px] font-bold text-emerald-600 bg-emerald-50 px-4 py-2 rounded-full uppercase tracking-wider border border-emerald-100">
+                    Local Records
+                  </div>
                 </div>
+
+                {/* Doctor Messages from Local Vault */}
                 {(() => {
                   const doctorRecords = vault.records.filter(
                     (record) =>
@@ -1811,91 +1970,101 @@ const App: React.FC = () => {
                     );
                   }
 
-                  return doctorRecords
-                    .slice()
-                    .reverse()
-                    .map((record) => (
-                      <div
-                        key={record.id}
-                        className="bg-white rounded-[40px] p-8 border border-slate-100 shadow-sm transition-all hover:shadow-md hover:border-emerald-100 group"
-                      >
-                        <div className="flex items-start gap-6">
-                          <div className="bg-emerald-50 text-emerald-600 group-hover:bg-emerald-600 group-hover:text-white p-4 rounded-3xl transition-colors">
-                            {record.type === "PRESCRIPTION" ? (
-                              <ShieldCheck size={28} />
-                            ) : (
-                              <MessageCircle size={28} />
-                            )}
-                          </div>
-                          <div className="flex-1">
-                            <div className="flex justify-between items-center mb-3">
-                              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                                {new Date(
-                                  record.timestamp
-                                ).toLocaleDateString()}{" "}
-                                •{" "}
-                                {new Date(record.timestamp).toLocaleTimeString(
-                                  [],
-                                  { hour: "2-digit", minute: "2-digit" }
+                  return (
+                    <div className="space-y-4">
+                      {doctorRecords
+                        .slice()
+                        .reverse()
+                        .map((record) => (
+                          <div
+                            key={record.id}
+                            className="bg-white rounded-[40px] p-8 border border-slate-100 shadow-sm transition-all hover:shadow-md hover:border-emerald-100 group"
+                          >
+                            <div className="flex items-start gap-6">
+                              <div className="bg-emerald-50 text-emerald-600 group-hover:bg-emerald-600 group-hover:text-white p-4 rounded-3xl transition-colors">
+                                {record.type === "PRESCRIPTION" ? (
+                                  <ShieldCheck size={28} />
+                                ) : (
+                                  <MessageCircle size={28} />
                                 )}
-                              </span>
-                              <div className="flex items-center gap-1.5 bg-emerald-50 text-emerald-700 text-[9px] font-black px-3 py-1 rounded-full uppercase">
-                                <CheckCircle2 size={10} /> From Doctor
                               </div>
-                            </div>
-
-                            {/* Doctor Information */}
-                            {record.doctorInfo && (
-                              <div className="bg-emerald-50 p-4 rounded-2xl mb-4 border border-emerald-100">
-                                <div className="flex items-center gap-2 mb-2">
-                                  <Stethoscope
-                                    size={14}
-                                    className="text-emerald-600"
-                                  />
-                                  <span className="text-[10px] font-black text-emerald-700 uppercase tracking-widest">
-                                    Doctor Details
+                              <div className="flex-1">
+                                <div className="flex justify-between items-center mb-3">
+                                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                                    {new Date(
+                                      record.timestamp
+                                    ).toLocaleDateString()}{" "}
+                                    •{" "}
+                                    {new Date(
+                                      record.timestamp
+                                    ).toLocaleTimeString([], {
+                                      hour: "2-digit",
+                                      minute: "2-digit",
+                                    })}
                                   </span>
+                                  <div className="flex items-center gap-1.5 bg-emerald-50 text-emerald-700 text-[9px] font-black px-3 py-1 rounded-full uppercase">
+                                    <CheckCircle2 size={10} /> From Doctor
+                                  </div>
                                 </div>
-                                <div className="text-sm">
-                                  <p className="font-bold text-emerald-800">
-                                    {record.doctorInfo.name}
-                                  </p>
-                                  <p className="text-[10px] text-emerald-600 uppercase tracking-wider">
-                                    {record.doctorInfo.specialization} •{" "}
-                                    {record.doctorInfo.clinicId}
-                                  </p>
-                                </div>
-                              </div>
-                            )}
 
-                            <p className="text-slate-900 font-bold text-lg mb-3 leading-snug">
-                              {record.translatedContent || record.content}
-                            </p>
-                            <div className="flex gap-2 mb-4">
-                              {record.icons?.map((icon, idx) => (
-                                <IconDisplay key={idx} type={icon} />
-                              ))}
+                                {/* Doctor Information */}
+                                {record.doctorInfo && (
+                                  <div className="bg-emerald-50 p-4 rounded-2xl mb-4 border border-emerald-100">
+                                    <div className="flex items-center gap-2 mb-2">
+                                      <Stethoscope
+                                        size={14}
+                                        className="text-emerald-600"
+                                      />
+                                      <span className="text-[10px] font-black text-emerald-700 uppercase tracking-widest">
+                                        Doctor Details
+                                      </span>
+                                    </div>
+                                    <div className="text-sm">
+                                      <p className="font-bold text-emerald-800">
+                                        {record.doctorInfo.name}
+                                      </p>
+                                      <p className="text-[10px] text-emerald-600 uppercase tracking-wider">
+                                        {record.doctorInfo.specialization} •{" "}
+                                        {record.doctorInfo.clinicId}
+                                      </p>
+                                    </div>
+                                  </div>
+                                )}
+
+                                <p className="text-slate-900 font-bold text-lg mb-3 leading-snug">
+                                  {record.translatedContent || record.content}
+                                </p>
+                                <div className="flex gap-2 mb-4">
+                                  {record.icons?.map((icon, idx) => (
+                                    <IconDisplay key={idx} type={icon} />
+                                  ))}
+                                </div>
+                                <button
+                                  onClick={() =>
+                                    playVoiceBack(
+                                      record.id,
+                                      record.translatedContent ||
+                                        record.content!
+                                    )
+                                  }
+                                  className="flex items-center gap-3 text-xs font-black uppercase text-emerald-600 bg-emerald-50 px-6 py-3 rounded-2xl transition-all hover:bg-emerald-100 active:scale-95"
+                                >
+                                  {isPlaying === record.id ? (
+                                    <Loader2
+                                      className="animate-spin"
+                                      size={16}
+                                    />
+                                  ) : (
+                                    <Volume2 size={16} />
+                                  )}
+                                  Play Doctor's Instructions
+                                </button>
+                              </div>
                             </div>
-                            <button
-                              onClick={() =>
-                                playVoiceBack(
-                                  record.id,
-                                  record.translatedContent || record.content!
-                                )
-                              }
-                              className="flex items-center gap-3 text-xs font-black uppercase text-emerald-600 bg-emerald-50 px-6 py-3 rounded-2xl transition-all hover:bg-emerald-100 active:scale-95"
-                            >
-                              {isPlaying === record.id ? (
-                                <Loader2 className="animate-spin" size={16} />
-                              ) : (
-                                <Volume2 size={16} />
-                              )}
-                              Play Doctor's Instructions
-                            </button>
                           </div>
-                        </div>
-                      </div>
-                    ));
+                        ))}
+                    </div>
+                  );
                 })()}
               </div>
             )}
@@ -1994,18 +2163,288 @@ const App: React.FC = () => {
                     <span>Medical Route: {activeCase.suggestedSpecialty}</span>
                   </div>
                   <div className="p-10 space-y-10">
-                    <div className="flex items-center gap-6">
-                      <div className="w-20 h-20 bg-slate-50 rounded-[32px] flex items-center justify-center text-slate-300 border border-slate-100">
-                        <User size={40} />
+                    {/* Enhanced Patient Profile Display */}
+                    <div className="space-y-8">
+                      {/* Basic Patient Info */}
+                      <div className="flex items-center gap-6">
+                        <div className="w-20 h-20 bg-slate-50 rounded-[32px] flex items-center justify-center text-slate-300 border border-slate-100">
+                          <User size={40} />
+                        </div>
+                        <div>
+                          <h3 className="text-3xl font-black text-slate-900 leading-none mb-2">
+                            {activeCase.patientName}
+                          </h3>
+                          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">
+                            {activeCase.historyContext}
+                          </p>
+                        </div>
                       </div>
-                      <div>
-                        <h3 className="text-3xl font-black text-slate-900 leading-none mb-2">
-                          {activeCase.patientName}
-                        </h3>
-                        <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">
-                          {activeCase.historyContext}
-                        </p>
-                      </div>
+
+                      {/* Comprehensive Patient Context */}
+                      {activeCase.patientContext ? (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                          {/* Patient Demographics */}
+                          <div className="bg-blue-50 p-6 rounded-[32px] border border-blue-100">
+                            <div className="flex items-center gap-2 mb-4">
+                              <UserCircle size={16} className="text-blue-600" />
+                              <h4 className="text-sm font-black text-blue-700 uppercase tracking-wider">
+                                Patient Profile
+                              </h4>
+                            </div>
+                            <div className="space-y-3 text-sm">
+                              <div className="flex justify-between">
+                                <span className="font-medium text-blue-600">
+                                  Age:
+                                </span>
+                                <span className="font-bold text-blue-800">
+                                  {activeCase.patientContext.age} years
+                                </span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span className="font-medium text-blue-600">
+                                  Phone:
+                                </span>
+                                <span className="font-bold text-blue-800">
+                                  {activeCase.patientContext.phoneNumber}
+                                </span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span className="font-medium text-blue-600">
+                                  Language:
+                                </span>
+                                <span className="font-bold text-blue-800">
+                                  {activeCase.patientContext.language}
+                                </span>
+                              </div>
+                              <div className="mt-3 pt-3 border-t border-blue-200">
+                                <span className="text-xs font-bold text-blue-600 uppercase tracking-wider">
+                                  Address:
+                                </span>
+                                <p className="text-sm font-bold text-blue-800 mt-1">
+                                  {activeCase.patientContext.houseNumber},{" "}
+                                  {activeCase.patientContext.streetVillage},{" "}
+                                  {activeCase.patientContext.district},{" "}
+                                  {activeCase.patientContext.state}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Medical History & Current Status */}
+                          <div className="bg-emerald-50 p-6 rounded-[32px] border border-emerald-100">
+                            <div className="flex items-center gap-2 mb-4">
+                              <History size={16} className="text-emerald-600" />
+                              <h4 className="text-sm font-black text-emerald-700 uppercase tracking-wider">
+                                Medical Status
+                              </h4>
+                            </div>
+                            <div className="space-y-3 text-sm">
+                              <div className="flex justify-between">
+                                <span className="font-medium text-emerald-600">
+                                  Previous Visits:
+                                </span>
+                                <span className="font-bold text-emerald-800">
+                                  {
+                                    activeCase.patientContext
+                                      .previousInteractions
+                                  }
+                                </span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span className="font-medium text-emerald-600">
+                                  Active Reminders:
+                                </span>
+                                <span className="font-bold text-emerald-800">
+                                  {activeCase.patientContext.activeReminders}
+                                </span>
+                              </div>
+                              {activeCase.patientContext.riskFactors?.length >
+                                0 && (
+                                <div className="mt-3 pt-3 border-t border-emerald-200">
+                                  <span className="text-xs font-bold text-emerald-600 uppercase tracking-wider">
+                                    Risk Factors:
+                                  </span>
+                                  <div className="flex flex-wrap gap-1 mt-1">
+                                    {activeCase.patientContext.riskFactors.map(
+                                      (factor: string, idx: number) => (
+                                        <span
+                                          key={idx}
+                                          className="text-xs font-bold text-emerald-700 bg-emerald-100 px-2 py-1 rounded-full"
+                                        >
+                                          {factor}
+                                        </span>
+                                      )
+                                    )}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="bg-yellow-50 p-6 rounded-[32px] border border-yellow-100 text-center">
+                          <Info
+                            size={24}
+                            className="mx-auto text-yellow-500 mb-2"
+                          />
+                          <p className="text-sm font-bold text-yellow-700">
+                            Patient context is not available for this case.
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Current Medications */}
+                      {activeCase.patientContext?.currentMedications?.length >
+                        0 && (
+                        <div className="bg-amber-50 p-6 rounded-[32px] border border-amber-100">
+                          <div className="flex items-center gap-2 mb-4">
+                            <Pill size={16} className="text-amber-600" />
+                            <h4 className="text-sm font-black text-amber-700 uppercase tracking-wider">
+                              Current Medications
+                            </h4>
+                          </div>
+                          <div className="space-y-2">
+                            {activeCase.patientContext.currentMedications.map(
+                              (med: string, idx: number) => (
+                                <div
+                                  key={idx}
+                                  className="flex items-center gap-2"
+                                >
+                                  <div className="w-2 h-2 bg-amber-400 rounded-full"></div>
+                                  <span className="text-sm font-bold text-amber-800">
+                                    {med}
+                                  </span>
+                                </div>
+                              )
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Medical History */}
+                      {activeCase.patientContext?.medicalHistory?.length >
+                        0 && (
+                        <div className="bg-purple-50 p-6 rounded-[32px] border border-purple-100">
+                          <div className="flex items-center gap-2 mb-4">
+                            <FileWarning
+                              size={16}
+                              className="text-purple-600"
+                            />
+                            <h4 className="text-sm font-black text-purple-700 uppercase tracking-wider">
+                              Recent Medical History
+                            </h4>
+                          </div>
+                          <div className="space-y-2">
+                            {activeCase.patientContext.medicalHistory
+                              .slice(0, 3)
+                              .map((history: string, idx: number) => (
+                                <div
+                                  key={idx}
+                                  className="flex items-start gap-2"
+                                >
+                                  <div className="w-2 h-2 bg-purple-400 rounded-full mt-2 flex-shrink-0"></div>
+                                  <span className="text-sm font-medium text-purple-800">
+                                    {history}
+                                  </span>
+                                </div>
+                              ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Emergency Contact */}
+                      {activeCase.patientContext?.emergencyContact && (
+                        <div className="bg-red-50 p-6 rounded-[32px] border border-red-100">
+                          <div className="flex items-center gap-2 mb-4">
+                            <AlertTriangle size={16} className="text-red-600" />
+                            <h4 className="text-sm font-black text-red-700 uppercase tracking-wider">
+                              Emergency Contact
+                            </h4>
+                          </div>
+                          <div className="space-y-2 text-sm">
+                            <div className="flex justify-between">
+                              <span className="font-medium text-red-600">
+                                Contact:
+                              </span>
+                              <span className="font-bold text-red-800">
+                                {
+                                  activeCase.patientContext.emergencyContact
+                                    .name
+                                }
+                              </span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="font-medium text-red-600">
+                                Phone:
+                              </span>
+                              <span className="font-bold text-red-800">
+                                {
+                                  activeCase.patientContext.emergencyContact
+                                    .phone
+                                }
+                              </span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="font-medium text-red-600">
+                                Relationship:
+                              </span>
+                              <span className="font-bold text-red-800">
+                                {
+                                  activeCase.patientContext.emergencyContact
+                                    .relationship
+                                }
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Current Symptoms */}
+                      {activeCase.currentSymptoms && (
+                        <div className="bg-indigo-50 p-6 rounded-[32px] border border-indigo-100">
+                          <div className="flex items-center gap-2 mb-4">
+                            <Activity size={16} className="text-indigo-600" />
+                            <h4 className="text-sm font-black text-indigo-700 uppercase tracking-wider">
+                              Current Symptoms
+                            </h4>
+                          </div>
+                          <div className="space-y-3 text-sm">
+                            <div>
+                              <span className="text-xs font-bold text-indigo-600 uppercase tracking-wider">
+                                Description:
+                              </span>
+                              <p className="text-sm font-medium text-indigo-800 mt-1">
+                                {activeCase.currentSymptoms.description}
+                              </p>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="font-medium text-indigo-600">
+                                Severity:
+                              </span>
+                              <span
+                                className={`font-bold px-2 py-1 rounded-full text-xs ${
+                                  activeCase.currentSymptoms.severity === "HIGH"
+                                    ? "bg-red-100 text-red-700"
+                                    : activeCase.currentSymptoms.severity ===
+                                      "MEDIUM"
+                                    ? "bg-yellow-100 text-yellow-700"
+                                    : "bg-green-100 text-green-700"
+                                }`}
+                              >
+                                {activeCase.currentSymptoms.severity}
+                              </span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="font-medium text-indigo-600">
+                                Duration:
+                              </span>
+                              <span className="font-bold text-indigo-800">
+                                {activeCase.currentSymptoms.duration}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-8">

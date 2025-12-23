@@ -70,6 +70,38 @@ export interface SyncPacket {
   visualTriage?: string;
   suggestedSpecialty: string;
   timestamp: number;
+  // Enhanced patient context for doctor visibility
+  patientContext: {
+    // Complete demographic information
+    age: number;
+    phoneNumber: string;
+    houseNumber: string;
+    streetVillage: string;
+    district: string;
+    state: string;
+    language: SupportedLanguage;
+    // Medical history summary
+    medicalHistory: string[];
+    currentMedications: string[];
+    activeReminders: number;
+    previousInteractions: number;
+    // Emergency information
+    emergencyContact?: {
+      name: string;
+      phone: string;
+      relationship: string;
+    };
+    // Risk factors and special considerations
+    riskFactors?: string[];
+    allergies?: string[];
+  };
+  // Current symptoms and triage
+  currentSymptoms: {
+    description: string;
+    severity: "LOW" | "MEDIUM" | "HIGH";
+    duration?: string;
+    additionalNotes?: string;
+  };
 }
 
 export interface Coordinates {
@@ -209,4 +241,19 @@ export interface DemoPharmacy {
   phone: string;
   deliveryTime: string; // estimated delivery time
   rating: number;
+}
+
+export interface DemoPatientProfile {
+  patientId: string;
+  name: string;
+  age: number;
+  gender: "MALE" | "FEMALE";
+  location: string;
+  state: string;
+  district: string;
+  conditionSummary: string;
+  language: SupportedLanguage;
+  phoneNumber: string;
+  houseNumber: string;
+  streetVillage: string;
 }
