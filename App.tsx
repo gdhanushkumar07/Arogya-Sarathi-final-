@@ -118,7 +118,7 @@ const loadPatientsFromStorage = (): PatientProfile[] => {
     const legacy = localStorage.getItem("hv_patient_profiles");
     return legacy ? JSON.parse(legacy) : [];
   } catch (error) {
-    console.error("❌ Failed to load patients from storage", error);
+    console.error("Failed to load patients from storage", error);
     return [];
   }
 };
@@ -129,7 +129,7 @@ const savePatientsToStorage = (patients: PatientProfile[]) => {
     // Keep legacy keys in sync to avoid regressions
     localStorage.setItem("hv_patient_profiles", JSON.stringify(patients));
   } catch (error) {
-    console.error("❌ Failed to save patients to storage", error);
+    console.error("Failed to save patients to storage", error);
   }
 };
 
@@ -144,7 +144,7 @@ const loadActivePatientFromStorage = (): PatientProfile | null => {
     const legacyProfile = localStorage.getItem("hv_patient_profile");
     return legacyProfile ? JSON.parse(legacyProfile) : null;
   } catch (error) {
-    console.error("❌ Failed to load active patient from storage", error);
+    console.error("Failed to load active patient from storage", error);
     return null;
   }
 };
@@ -162,7 +162,7 @@ const saveActivePatientToStorage = (patient: PatientProfile | null) => {
       localStorage.removeItem("hv_patient_profile");
     }
   } catch (error) {
-    console.error("❌ Failed to save active patient to storage", error);
+    console.error("Failed to save active patient to storage", error);
   }
 };
 
@@ -200,7 +200,7 @@ const translateText = async (
       const data = await res.json();
       if (data?.translatedText) return data.translatedText;
     } catch (error) {
-      console.warn(`⚠️ Translation failed on ${url}, falling back`, error);
+      console.warn(`Translation failed on ${url}, falling back`, error);
     }
   }
   return text;
@@ -330,7 +330,7 @@ const App: React.FC = () => {
         "syncPool"
       );
       localStorage.setItem(syncKey, JSON.stringify(syncPool));
-      console.log("💾 Sync pool saved for patient:", patientProfile.patientId);
+      console.log("Sync pool saved for patient:", patientProfile.patientId);
     }
   }, [syncPool, patientProfile]);
 
@@ -338,7 +338,7 @@ const App: React.FC = () => {
     if (patientProfile) {
       const vaultKey = getPatientStorageKey(patientProfile.patientId, "vault");
       localStorage.setItem(vaultKey, JSON.stringify(vault));
-      console.log("💾 Vault saved for patient:", patientProfile.patientId);
+      console.log("Vault saved for patient:", patientProfile.patientId);
     }
   }, [vault, patientProfile]);
 
@@ -347,7 +347,7 @@ const App: React.FC = () => {
     if (patientProfile) {
       // Save current patient profile separately for easy restoration
       saveActivePatientToStorage(patientProfile);
-      console.log("💾 Current patient profile saved:", patientProfile.name);
+      console.log("Current patient profile saved:", patientProfile.name);
 
       // Update available patients list
       const updatedPatients = availablePatients.map((p) =>
@@ -362,7 +362,7 @@ const App: React.FC = () => {
       }
 
       savePatientsToStorage(updatedPatients);
-      console.log("💾 Patient profiles list updated:", updatedPatients.length);
+      console.log("Patient profiles list updated:", updatedPatients.length);
     }
   }, [availablePatients, patientProfile]);
 
@@ -375,12 +375,12 @@ const App: React.FC = () => {
       const storedActive = loadActivePatientFromStorage();
 
       if (storedPatients.length > 0) {
-        console.log("✅ Restored patient profiles list:", storedPatients.length);
+        console.log("Restored patient profiles list:", storedPatients.length);
         setAvailablePatients(storedPatients);
       }
 
       if (storedActive && !isAddingNewPatient) {
-        console.log("✅ Restored active patient:", storedActive.name);
+        console.log("Restored active patient:", storedActive.name);
         setPatientProfile(storedActive);
       } else if (storedPatients.length > 0 && !isAddingNewPatient) {
         console.log("🔄 Auto-selecting first available patient");
@@ -407,7 +407,7 @@ const App: React.FC = () => {
         console.log("📨 Fetched backend messages:", data.messages?.length || 0);
       }
     } catch (error) {
-      console.error("❌ Failed to fetch patient messages:", error);
+      console.error("Failed to fetch patient messages:", error);
     }
   }, [patientProfile]);
 
@@ -454,19 +454,19 @@ const App: React.FC = () => {
       // Initialize medicine reminders for this patient
       reminderService.startReminderChecks(patientProfile.patientId);
 
-      console.log("✅ Patient data loaded for:", patientProfile.name);
+      console.log("Patient data loaded for:", patientProfile.name);
     }
   }, [patientProfile, fetchPatientMessages]);
 
   // Complete logout function with session reset
   const handleLogout = useCallback(() => {
-    console.log("🚪 Logging out and clearing all session data");
+    console.log("Logging out and clearing all session data");
 
     // Stop background services first
     if (patientProfile) {
       reminderService.stopAllReminderChecks();
       console.log(
-        "🛑 Stopped reminder service for patient:",
+        "Stopped reminder service for patient:",
         patientProfile.patientId
       );
     }
@@ -479,7 +479,7 @@ const App: React.FC = () => {
       ];
       patientKeysToRemove.forEach((key) => {
         localStorage.removeItem(key);
-        console.log("🗑️ Removed patient data key:", key);
+        console.log("Removed patient data key:", key);
       });
     }
 
@@ -493,7 +493,7 @@ const App: React.FC = () => {
     ];
     keysToRemove.forEach((key) => {
       localStorage.removeItem(key);
-      console.log("🗑️ Removed global data key:", key);
+      console.log("Removed global data key:", key);
     });
 
     // Clear all other Arogya Sarathi keys as backup
@@ -501,7 +501,7 @@ const App: React.FC = () => {
       const key = localStorage.key(i);
       if (key && key.startsWith("hv_")) {
         localStorage.removeItem(key);
-        console.log("🗑️ Removed backup Arogya Sarathi key:", key);
+        console.log("Removed backup Arogya Sarathi key:", key);
       }
     }
 
@@ -546,7 +546,7 @@ const App: React.FC = () => {
     // Reset user role
     setUserRole(null);
 
-    console.log("✅ Complete logout and session reset completed");
+    console.log("Complete logout and session reset completed");
   }, [patientProfile]);
 
   // Clear current patient data for switching
@@ -597,7 +597,7 @@ const App: React.FC = () => {
         saveActivePatientToStorage(selectedPatient);
 
         // Data will be loaded automatically by the useEffect above
-        console.log("✅ Patient switch initiated for:", selectedPatient.name);
+        console.log("Patient switch initiated for:", selectedPatient.name);
       } else {
         // Adding new patient - clear selector and let PatientOnboarding handle it
         console.log("🔄 Initiating new patient onboarding");
@@ -606,7 +606,7 @@ const App: React.FC = () => {
         setPatientProfile(null);
         saveActivePatientToStorage(null);
         // The PatientOnboarding will be shown automatically when patientProfile is null
-        console.log("✅ New patient onboarding initiated");
+        console.log("New patient onboarding initiated");
       }
     },
     [availablePatients, clearCurrentPatientData]
@@ -772,7 +772,7 @@ const App: React.FC = () => {
           district: patientProfile.district,
         };
 
-        console.log("📦 Creating sync packet with real patient data:", {
+        console.log("Creating sync packet with real patient data:", {
           patientName: patientProfile.name,
           patientAge: patientProfile.age,
           patientLocation: patientProfile.location,
@@ -783,7 +783,7 @@ const App: React.FC = () => {
           symptomsText
         );
 
-        console.log("✅ Delta sync sent to backend:", delta);
+        console.log("Delta sync sent to backend:", delta);
 
         // Note: sync packets are now stored in backend, not locally
         // Doctors will fetch them from the backend
@@ -796,9 +796,9 @@ const App: React.FC = () => {
         ),
       }));
 
-      console.log("✅ Sync completed successfully");
+      console.log("Sync completed successfully");
     } catch (error) {
-      console.error("❌ Sync interrupted:", error);
+      console.error("Sync interrupted:", error);
     } finally {
       setTimeout(() => setIsSyncing(false), 2000);
     }
@@ -821,7 +821,7 @@ const App: React.FC = () => {
           const packets = await processingService.fetchSyncPackets();
           setSyncPool(packets);
           console.log(
-            `📡 Fetched ${packets.length} sync packets for ${doctorProfile.specialization}`
+            `Fetched ${packets.length} sync packets for ${doctorProfile.specialization}`
           );
         } catch (error) {
           console.error("Failed to fetch sync packets:", error);
@@ -1082,7 +1082,7 @@ const App: React.FC = () => {
       setDoctorNoteInput("");
       setTimeout(() => setWhatsappNotify(null), 5000);
     } catch (error) {
-      console.error("❌ Error in handleDoctorSubmit:", error);
+      console.error("Error in handleDoctorSubmit:", error);
       setWhatsappNotify("Error: Failed to send message. Please try again.");
       setTimeout(() => setWhatsappNotify(null), 5000);
     } finally {

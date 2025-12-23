@@ -148,7 +148,7 @@ app.post("/api/send-doctor-message", async (req, res) => {
 
     messageStore.get(patientId).push(msg);
 
-    console.log("💾 Doctor message saved:", {
+    console.log("Doctor message saved:", {
       patientId,
       doctorName: msg.doctorName,
       type: msg.type,
@@ -157,7 +157,7 @@ app.post("/api/send-doctor-message", async (req, res) => {
 
     res.json({ success: true, messageId: msg.id, message: msg });
   } catch (error) {
-    console.error("❌ Message send failed:", error);
+    console.error("Message send failed:", error);
     res.status(500).json({ error: "Message send failed" });
   }
 });
@@ -220,7 +220,7 @@ const syncPacketStore = new Map();
 function useRealPatientContext(vault) {
   // Validate that we have essential patient data
   if (!vault || !vault.name || !vault.age || vault.age <= 0) {
-    console.log("⚠️ Missing essential patient data:", {
+    console.log("Missing essential patient data:", {
       hasVault: !!vault,
       hasName: !!vault?.name,
       hasAge: !!vault?.age,
@@ -228,7 +228,7 @@ function useRealPatientContext(vault) {
     return null;
   }
 
-  console.log("✅ Using real patient data:", {
+  console.log("Using real patient data:", {
     name: vault.name,
     age: vault.age,
     location: vault.location,
@@ -282,7 +282,7 @@ app.post("/api/delta-sync", async (req, res) => {
       });
     }
 
-    console.log("📦 Delta sync received:", {
+    console.log("Delta sync received:", {
       vault: { name: vault.name, age: vault.age },
       newSymptoms,
       hasCurrentSymptoms: !!currentSymptoms,
@@ -326,7 +326,7 @@ app.post("/api/delta-sync", async (req, res) => {
       });
     }
 
-    console.log("📦 Creating sync packet with real patient data:", {
+    console.log("Creating sync packet with real patient data:", {
       patientName: realPatientContext.name,
       patientAge: realPatientContext.age,
       patientLocation: realPatientContext.streetVillage,
@@ -360,7 +360,7 @@ app.post("/api/delta-sync", async (req, res) => {
     // Store packet in backend memory
     syncPacketStore.set(syncPacket.packetId, syncPacket);
 
-    console.log("💾 Real patient sync packet stored:", {
+    console.log("Real patient sync packet stored:", {
       packetId: syncPacket.packetId,
       patientName: syncPacket.patientName,
       patientAge: syncPacket.patientContext.age,
@@ -377,7 +377,7 @@ app.post("/api/delta-sync", async (req, res) => {
       patientId: syncPacket.patientId,
     });
   } catch (err) {
-    console.error("❌ Delta sync error:", err);
+    console.error("Delta sync error:", err);
     res.status(500).json({ error: "Delta sync failed" });
   }
 });
@@ -409,7 +409,7 @@ app.get("/api/fetch-sync-packets", async (req, res) => {
     }
 
     console.log(
-      `📡 Returning ${packets.length} sync packets for specialty: ${
+      `Returning ${packets.length} sync packets for specialty: ${
         specialty || "ALL"
       }`
     );
@@ -420,7 +420,7 @@ app.get("/api/fetch-sync-packets", async (req, res) => {
       lastSync: Date.now(),
     });
   } catch (err) {
-    console.error("❌ Fetch sync packets error:", err);
+    console.error("Fetch sync packets error:", err);
     res.status(500).json({ error: "Failed to fetch sync packets" });
   }
 });
@@ -439,7 +439,7 @@ app.post("/api/mark-packet-processed", async (req, res) => {
     // Remove packet from store after processing
     if (syncPacketStore.has(packetId)) {
       syncPacketStore.delete(packetId);
-      console.log("✅ Packet marked as processed:", packetId);
+      console.log("Packet marked as processed:", packetId);
     }
 
     res.json({
@@ -447,13 +447,13 @@ app.post("/api/mark-packet-processed", async (req, res) => {
       processedBy: doctorId || "DOCTOR",
     });
   } catch (err) {
-    console.error("❌ Mark packet processed error:", err);
+    console.error("Mark packet processed error:", err);
     res.status(500).json({ error: "Failed to mark packet as processed" });
   }
 });
 
 app.listen(4000, () => {
-  console.log("✅ Backend running on port 4000");
-  console.log("📡 Rural Sync & Messaging Ready");
-  console.log("📋 Sync Packet Storage: Active");
+  console.log("Backend running on port 4000");
+  console.log("Rural Sync & Messaging Ready");
+  console.log("Sync Packet Storage: Active");
 });

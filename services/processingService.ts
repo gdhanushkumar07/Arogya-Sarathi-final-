@@ -107,7 +107,7 @@ class ProcessingService {
         packetSize: result.packetSize || "8KB",
       };
     } catch (error) {
-      console.error("❌ Delta sync failed:", error);
+      console.error("Delta sync failed:", error);
 
       // Local fallback (offline-safe)
       const text = symptoms.toLowerCase();
@@ -194,7 +194,7 @@ class ProcessingService {
       const result = await response.json();
       return result.packets || [];
     } catch (error) {
-      console.error("❌ Fetch sync packets failed:", error);
+      console.error("Fetch sync packets failed:", error);
       return [];
     }
   }
@@ -215,7 +215,7 @@ class ProcessingService {
 
       return response.ok;
     } catch (error) {
-      console.error("❌ Mark packet processed failed:", error);
+      console.error("Mark packet processed failed:", error);
       return false;
     }
   }
