@@ -99,6 +99,113 @@ const getPatientStorageKey = (
   return `hv_${dataType}_${patientId}`;
 };
 
+const PATIENTS_STORAGE_KEY = "patients";
+const ACTIVE_PATIENT_STORAGE_KEY = "activePatient";
+const LANGUAGE_PREF_KEY = "hv_language_pref";
+const LANGUAGE_CODE_MAP: Record<string, string> = {
+  English: "en",
+  Telugu: "te",
+  Hindi: "hi",
+  Tamil: "ta",
+  Kannada: "kn",
+};
+
+const loadPatientsFromStorage = (): PatientProfile[] => {
+  try {
+    const primary = localStorage.getItem(PATIENTS_STORAGE_KEY);
+    if (primary) return JSON.parse(primary);
+
+    const legacy = localStorage.getItem("hv_patient_profiles");
+    return legacy ? JSON.parse(legacy) : [];
+  } catch (error) {
+    console.error("❌ Failed to load patients from storage", error);
+    return [];
+  }
+};
+
+const savePatientsToStorage = (patients: PatientProfile[]) => {
+  try {
+    localStorage.setItem(PATIENTS_STORAGE_KEY, JSON.stringify(patients));
+    // Keep legacy keys in sync to avoid regressions
+    localStorage.setItem("hv_patient_profiles", JSON.stringify(patients));
+  } catch (error) {
+    console.error("❌ Failed to save patients to storage", error);
+  }
+};
+
+const loadActivePatientFromStorage = (): PatientProfile | null => {
+  try {
+    const primary = localStorage.getItem(ACTIVE_PATIENT_STORAGE_KEY);
+    if (primary) return JSON.parse(primary);
+
+    const legacyCurrent = localStorage.getItem("hv_current_patient_profile");
+    if (legacyCurrent) return JSON.parse(legacyCurrent);
+
+    const legacyProfile = localStorage.getItem("hv_patient_profile");
+    return legacyProfile ? JSON.parse(legacyProfile) : null;
+  } catch (error) {
+    console.error("❌ Failed to load active patient from storage", error);
+    return null;
+  }
+};
+
+const saveActivePatientToStorage = (patient: PatientProfile | null) => {
+  try {
+    if (patient) {
+      localStorage.setItem(ACTIVE_PATIENT_STORAGE_KEY, JSON.stringify(patient));
+      // Keep legacy keys in sync to avoid regressions
+      localStorage.setItem("hv_current_patient_profile", JSON.stringify(patient));
+      localStorage.setItem("hv_patient_profile", JSON.stringify(patient));
+    } else {
+      localStorage.removeItem(ACTIVE_PATIENT_STORAGE_KEY);
+      localStorage.removeItem("hv_current_patient_profile");
+      localStorage.removeItem("hv_patient_profile");
+    }
+  } catch (error) {
+    console.error("❌ Failed to save active patient to storage", error);
+  }
+};
+
+// Lightweight translation helper (best effort, non-blocking)
+const translateText = async (
+  text: string,
+  targetLanguage: string
+): Promise<string> => {
+  // Skip if already English or empty
+  if (!text || targetLanguage === "English") return text;
+  const targetCode = LANGUAGE_CODE_MAP[targetLanguage] || null;
+  if (!targetCode) return text;
+  const endpoints = [
+    "https://libretranslate.de/translate",
+    "https://translate.argosopentech.com/translate",
+  ];
+  for (const url of endpoints) {
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        mode: "cors",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({
+          q: text,
+          source: "auto",
+          target: targetCode,
+          format: "text",
+          api_key: "",
+        }),
+      });
+      if (!res.ok) continue;
+      const data = await res.json();
+      if (data?.translatedText) return data.translatedText;
+    } catch (error) {
+      console.warn(`⚠️ Translation failed on ${url}, falling back`, error);
+    }
+  }
+  return text;
+};
+
 const IconDisplay: React.FC<{ type: "SUN" | "MOON" | "FOOD" }> = ({ type }) => {
   switch (type) {
     case "SUN":
@@ -139,13 +246,11 @@ const App: React.FC = () => {
     () => (localStorage.getItem("hv_user_role") as UserRole) || null
   );
   const [patientProfile, setPatientProfile] = useState<PatientProfile | null>(
-    null
+    () => loadActivePatientFromStorage()
   );
+  const [isAddingNewPatient, setIsAddingNewPatient] = useState(false);
   const [availablePatients, setAvailablePatients] = useState<PatientProfile[]>(
-    () => {
-      const s = localStorage.getItem("hv_patient_profiles");
-      return s ? JSON.parse(s) : [];
-    }
+    () => loadPatientsFromStorage()
   );
   const [showPatientSelector, setShowPatientSelector] = useState(false);
   const [doctorProfile, setDoctorProfile] = useState<DoctorProfile | null>(
@@ -159,6 +264,9 @@ const App: React.FC = () => {
       const s = localStorage.getItem("hv_pharmacy_profile");
       return s ? JSON.parse(s) : null;
     });
+  const [selectedLanguage, setSelectedLanguage] = useState<string>(
+    () => localStorage.getItem(LANGUAGE_PREF_KEY) || "English"
+  );
 
   const [network, setNetwork] = useState<ConnectivityState>(
     ConnectivityState.OFFLINE
@@ -208,6 +316,7 @@ const App: React.FC = () => {
   const [unreadMessageCount, setUnreadMessageCount] = useState(0);
   const [whatsappNotify, setWhatsappNotify] = useState<string | null>(null);
   const [backendMessages, setBackendMessages] = useState<any[]>([]);
+  const [translations, setTranslations] = useState<Record<string, string>>({});
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -237,10 +346,7 @@ const App: React.FC = () => {
   useEffect(() => {
     if (patientProfile) {
       // Save current patient profile separately for easy restoration
-      localStorage.setItem(
-        "hv_current_patient_profile",
-        JSON.stringify(patientProfile)
-      );
+      saveActivePatientToStorage(patientProfile);
       console.log("💾 Current patient profile saved:", patientProfile.name);
 
       // Update available patients list
@@ -255,59 +361,37 @@ const App: React.FC = () => {
         updatedPatients.push(patientProfile);
       }
 
-      localStorage.setItem(
-        "hv_patient_profiles",
-        JSON.stringify(updatedPatients)
-      );
+      savePatientsToStorage(updatedPatients);
       console.log("💾 Patient profiles list updated:", updatedPatients.length);
     }
   }, [availablePatients, patientProfile]);
 
   // Initialize patient profile from localStorage on app startup
   useEffect(() => {
-    if (userRole === "PATIENT") {
+    if (userRole === "PATIENT" && !patientProfile) {
       console.log("🔄 Initializing patient session...");
 
-      // First, try to restore the current patient profile
-      const savedProfile = localStorage.getItem("hv_current_patient_profile");
-      const savedPatients = localStorage.getItem("hv_patient_profiles");
+      const storedPatients = loadPatientsFromStorage();
+      const storedActive = loadActivePatientFromStorage();
 
-      if (savedProfile) {
-        try {
-          const profile = JSON.parse(savedProfile);
-          console.log("✅ Restored patient profile:", profile.name);
-          setPatientProfile(profile);
-        } catch (error) {
-          console.error("❌ Error parsing saved patient profile:", error);
-          localStorage.removeItem("hv_current_patient_profile");
-        }
+      if (storedPatients.length > 0) {
+        console.log("✅ Restored patient profiles list:", storedPatients.length);
+        setAvailablePatients(storedPatients);
       }
 
-      if (savedPatients) {
-        try {
-          const patients = JSON.parse(savedPatients);
-          console.log("✅ Restored patient profiles list:", patients.length);
-          setAvailablePatients(patients);
-        } catch (error) {
-          console.error("❌ Error parsing saved patient profiles:", error);
-          localStorage.removeItem("hv_patient_profiles");
-        }
-      }
-
-      // If no saved profile but we have available patients, auto-select first
-      if (!patientProfile && availablePatients.length > 0) {
+      if (storedActive && !isAddingNewPatient) {
+        console.log("✅ Restored active patient:", storedActive.name);
+        setPatientProfile(storedActive);
+      } else if (storedPatients.length > 0 && !isAddingNewPatient) {
         console.log("🔄 Auto-selecting first available patient");
-        setPatientProfile(availablePatients[0]);
-      }
-
-      // If no saved profile and no available patients, ensure patient profile is null
-      if (!patientProfile && availablePatients.length === 0) {
+        setPatientProfile(storedPatients[0]);
+      } else {
         console.log(
           "📝 No patient data found - will require patient onboarding"
         );
       }
     }
-  }, [userRole]);
+  }, [userRole, patientProfile, isAddingNewPatient]);
 
   // Function to fetch messages from backend
   const fetchPatientMessages = useCallback(async () => {
@@ -509,6 +593,8 @@ const App: React.FC = () => {
         // Switch to new patient
         setPatientProfile(selectedPatient);
         setShowPatientSelector(false);
+        setIsAddingNewPatient(false);
+        saveActivePatientToStorage(selectedPatient);
 
         // Data will be loaded automatically by the useEffect above
         console.log("✅ Patient switch initiated for:", selectedPatient.name);
@@ -516,17 +602,47 @@ const App: React.FC = () => {
         // Adding new patient - clear selector and let PatientOnboarding handle it
         console.log("🔄 Initiating new patient onboarding");
         setShowPatientSelector(false);
+        setIsAddingNewPatient(true);
         setPatientProfile(null);
+        saveActivePatientToStorage(null);
         // The PatientOnboarding will be shown automatically when patientProfile is null
         console.log("✅ New patient onboarding initiated");
       }
     },
     [availablePatients, clearCurrentPatientData]
   );
+
+  // Optional helper to clear demo/local patient data for quick resets
+  const clearDemoData = useCallback(() => {
+    console.log("🧹 Clearing demo patient data");
+    clearCurrentPatientData();
+    setAvailablePatients([]);
+    setPatientProfile(null);
+    setIsAddingNewPatient(false);
+    savePatientsToStorage([]);
+    saveActivePatientToStorage(null);
+    setShowPatientSelector(false);
+  }, [clearCurrentPatientData]);
+
+  const openPatientPortal = useCallback(() => {
+    const latestPatients = loadPatientsFromStorage();
+    if (latestPatients.length > 0) {
+      setAvailablePatients(latestPatients);
+    }
+    setIsAddingNewPatient(false);
+    setShowPatientSelector(true);
+  }, []);
   useEffect(
     () => localStorage.setItem("pharmacy_orders", JSON.stringify(orders)),
     [orders]
   );
+
+  // Persist language preference and reset translations when changed
+  useEffect(() => {
+    localStorage.setItem(LANGUAGE_PREF_KEY, selectedLanguage);
+    setTranslations({});
+  }, [selectedLanguage]);
+
   useEffect(() => {
     if (userRole) localStorage.setItem("hv_user_role", userRole);
     if (patientProfile)
@@ -542,6 +658,43 @@ const App: React.FC = () => {
         JSON.stringify(pharmacyProfile)
       );
   }, [userRole, patientProfile, doctorProfile, pharmacyProfile]);
+
+  // Keep patient lists persisted for both new and legacy keys
+  useEffect(() => {
+    savePatientsToStorage(availablePatients);
+  }, [availablePatients]);
+
+  const requestTranslation = useCallback(
+    async (key: string, original: string) => {
+      if (!original || selectedLanguage === "English" || translations[key]) return;
+      const translated = await translateText(original, selectedLanguage);
+      setTranslations((prev) => ({
+        ...prev,
+        [key]: translated,
+      }));
+    },
+    [selectedLanguage, translations]
+  );
+
+  const getDisplayText = useCallback(
+    (key: string, original: string) => {
+      if (!original) return { primary: "", secondary: null as string | null };
+      if (selectedLanguage === "English") {
+        return { primary: original, secondary: null as string | null };
+      }
+      const cached = translations[key];
+      if (!cached) {
+        // Fire and forget translation; fallback to original
+        requestTranslation(key, original);
+        return { primary: original, secondary: original };
+      }
+      if (cached === original) {
+        return { primary: original, secondary: null as string | null };
+      }
+      return { primary: cached, secondary: original };
+    },
+    [requestTranslation, selectedLanguage, translations]
+  );
 
   // Network Handlers
   useEffect(() => {
@@ -1175,12 +1328,15 @@ const App: React.FC = () => {
       // Add to available patients if not already present
       setAvailablePatients((prev) => {
         const exists = prev.find((p) => p.patientId === patientId);
-        if (exists) return prev;
-        return [...prev, newPatient];
+        const updated = exists ? prev : [...prev, newPatient];
+        savePatientsToStorage(updated);
+        return updated;
       });
 
       // Set as current patient
+      saveActivePatientToStorage(newPatient);
       setPatientProfile(newPatient);
+      setIsAddingNewPatient(false);
     };
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-indigo-600 p-6">
@@ -1412,62 +1568,92 @@ const App: React.FC = () => {
     );
   }
 
-  // Patient Selector Component
-  const PatientSelector = () => (
+  // Patient Selector Component (modern modal)
+  const SelectPatientModal = () => (
     <div
-      className="fixed inset-0 z-40 bg-slate-900/50 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm px-4"
       onClick={() => setShowPatientSelector(false)}
     >
-      <div className="fixed top-16 left-4 right-4 z-50">
-        <div
-          className="bg-white rounded-2xl p-4 shadow-2xl border border-slate-200 max-w-md mx-auto"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-bold text-slate-800">Select Patient</h3>
-            <button
-              onClick={() => setShowPatientSelector(false)}
-              className="text-slate-400 hover:text-slate-600 text-xl"
-            >
-              ×
-            </button>
+      <div
+        className="w-full max-w-2xl bg-white rounded-3xl shadow-2xl border border-slate-100 overflow-hidden animate-in fade-in duration-200"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+          <div>
+            <p className="text-[11px] font-black text-indigo-500 uppercase tracking-[0.25em]">
+              Patient Portal
+            </p>
+            <h3 className="text-xl font-black text-slate-900">Select Patient</h3>
           </div>
-          <div className="space-y-2 max-h-60 overflow-y-auto">
-            {availablePatients.map((patient) => (
+          <button
+            onClick={() => setShowPatientSelector(false)}
+            className="w-10 h-10 rounded-2xl bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-500 transition-colors"
+          >
+            ×
+          </button>
+        </div>
+
+        <div className="max-h-[60vh] overflow-y-auto px-6 py-4 space-y-3">
+          {availablePatients.length === 0 && (
+            <div className="text-center py-8 bg-slate-50 rounded-2xl border border-slate-100">
+              <p className="text-sm font-bold text-slate-500">
+                No patients yet. Add a new patient to get started.
+              </p>
+            </div>
+          )}
+
+          {availablePatients.map((patient) => {
+            const isActive = patientProfile?.patientId === patient.patientId;
+            return (
               <button
                 key={patient.patientId}
-                onClick={() => {
-                  handlePatientSwitch(patient);
-                }}
-                className={`w-full text-left p-3 rounded-xl transition-all ${
-                  patientProfile?.patientId === patient.patientId
-                    ? "bg-indigo-100 border-2 border-indigo-300"
-                    : "bg-slate-50 hover:bg-slate-100 border-2 border-transparent"
+                onClick={() => handlePatientSwitch(patient)}
+                className={`w-full text-left p-4 rounded-2xl border transition-all flex items-center gap-4 hover:shadow-md ${
+                  isActive
+                    ? "border-indigo-300 bg-indigo-50 ring-1 ring-indigo-200"
+                    : "border-slate-100 bg-white hover:border-indigo-100"
                 }`}
               >
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-indigo-50 rounded-xl flex items-center justify-center">
-                    <User size={20} className="text-indigo-600" />
-                  </div>
-                  <div>
-                    <p className="font-bold text-slate-800">{patient.name}</p>
-                    <p className="text-xs text-slate-500">
-                      {patient.age}y • {patient.location}, {patient.state}
-                    </p>
-                  </div>
+                <div
+                  className={`w-12 h-12 rounded-2xl flex items-center justify-center ${
+                    isActive ? "bg-indigo-600 text-white" : "bg-slate-100 text-indigo-600"
+                  }`}
+                >
+                  <User size={22} />
                 </div>
+                <div className="flex-1">
+                  <p className="text-lg font-black text-slate-900">
+                    {patient.name}
+                  </p>
+                  <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+                    {patient.age}y • {patient.state || patient.location}
+                  </p>
+                </div>
+                {isActive && (
+                  <span className="text-[10px] font-black text-indigo-600 bg-indigo-50 px-3 py-1 rounded-full border border-indigo-100">
+                    Active
+                  </span>
+                )}
               </button>
-            ))}
-            <button
-              onClick={() => {
-                setPatientProfile(null);
-                setShowPatientSelector(false);
-              }}
-              className="w-full text-left p-3 rounded-xl bg-indigo-600 text-white font-bold hover:bg-indigo-700 transition-all"
-            >
-              + Add New Patient
-            </button>
-          </div>
+            );
+          })}
+        </div>
+
+        <div className="px-6 py-4 border-t border-slate-100 space-y-3">
+          <button
+            onClick={() => {
+              handlePatientSwitch(null);
+            }}
+            className="w-full bg-indigo-600 text-white font-black uppercase tracking-widest py-4 rounded-2xl hover:bg-indigo-700 active:scale-95 transition-all shadow-lg shadow-indigo-100"
+          >
+            + Add New Patient
+          </button>
+          <button
+            onClick={clearDemoData}
+            className="w-full text-[11px] font-bold text-slate-500 hover:text-slate-700 underline underline-offset-4 transition-colors"
+          >
+            Clear demo data
+          </button>
         </div>
       </div>
     </div>
@@ -1591,19 +1777,18 @@ const App: React.FC = () => {
             </div>
           </div>
           <div className="flex items-center space-x-2">
-            {userRole === "PATIENT" && availablePatients.length > 0 && (
+            {userRole === "PATIENT" && (
               <button
-                onClick={() => {
-                  console.log(
-                    "🔄 Opening patient selector, available patients:",
-                    availablePatients.length
-                  );
-                  setShowPatientSelector(true);
-                }}
+                onClick={openPatientPortal}
                 className="flex items-center space-x-2 text-[10px] font-bold text-indigo-600 bg-indigo-50 px-3 py-1.5 rounded-full border border-indigo-100 hover:bg-indigo-100 transition-all"
               >
                 <User size={14} />
-                <span>Switch Patient ({availablePatients.length})</span>
+                <span>
+                  Patient Portal{" "}
+                  {availablePatients.length > 0
+                    ? `(${availablePatients.length})`
+                    : ""}
+                </span>
               </button>
             )}
             <div className="hidden sm:flex items-center space-x-2 text-[10px] font-bold text-slate-500 bg-slate-50 px-3 py-1.5 rounded-full border border-slate-100">
@@ -1965,9 +2150,24 @@ const App: React.FC = () => {
                                   </div>
                                 )}
                               </div>
-                              <p className="text-slate-900 font-bold text-lg mb-3 leading-snug">
-                                {record.translatedContent || record.content}
-                              </p>
+                              {(() => {
+                                const display = getDisplayText(
+                                  `local-${record.id}`,
+                                  record.content
+                                );
+                                return (
+                                  <>
+                                    <p className="text-slate-900 font-bold text-lg mb-1 leading-snug">
+                                      {display.primary}
+                                    </p>
+                                    {display.secondary && (
+                                      <p className="text-[11px] text-slate-500 font-semibold">
+                                        {display.secondary}
+                                      </p>
+                                    )}
+                                  </>
+                                );
+                              })()}
                               {record.media?.analysis && (
                                 <p className="text-[10px] font-bold text-indigo-500 mb-3 uppercase tracking-wider">
                                   Status: {record.media.analysis}
@@ -2006,6 +2206,19 @@ const App: React.FC = () => {
                     <Stethoscope size={14} /> <span>Doctor Responses</span>
                   </div>
                   <div className="flex items-center gap-2">
+                    <select
+                      value={selectedLanguage}
+                      onChange={(e) => setSelectedLanguage(e.target.value)}
+                      className="text-[10px] font-bold text-slate-600 bg-white border border-slate-200 rounded-full px-3 py-2 uppercase tracking-wider hover:border-indigo-200 transition-colors"
+                    >
+                      {["English", "Telugu", "Hindi", "Tamil", "Kannada"].map(
+                        (lang) => (
+                          <option key={lang} value={lang}>
+                            {lang}
+                          </option>
+                        )
+                      )}
+                    </select>
                     <button
                       onClick={fetchPatientMessages}
                       className="text-[9px] font-bold text-blue-600 bg-blue-50 px-3 py-2 rounded-full uppercase tracking-wider border border-blue-100 hover:bg-blue-100 transition-colors flex items-center gap-1"
@@ -2072,9 +2285,24 @@ const App: React.FC = () => {
                                 </div>
                               </div>
 
-                              <p className="text-slate-900 font-bold text-lg mb-3 leading-snug">
-                                {msg.content}
-                              </p>
+                              {(() => {
+                                const display = getDisplayText(
+                                  `backend-${msg.id}`,
+                                  msg.content
+                                );
+                                return (
+                                  <>
+                                    <p className="text-slate-900 font-bold text-lg mb-1 leading-snug">
+                                      {display.primary}
+                                    </p>
+                                    {display.secondary && (
+                                      <p className="text-[11px] text-slate-500 font-semibold">
+                                        {display.secondary}
+                                      </p>
+                                    )}
+                                  </>
+                                );
+                              })()}
                             </div>
                           </div>
                         </div>
@@ -2165,9 +2393,24 @@ const App: React.FC = () => {
                                   </div>
                                 )}
 
-                                <p className="text-slate-900 font-bold text-lg mb-3 leading-snug">
-                                  {record.translatedContent || record.content}
-                                </p>
+                                {(() => {
+                                  const display = getDisplayText(
+                                    `local-${record.id}`,
+                                    record.content
+                                  );
+                                  return (
+                                    <>
+                                      <p className="text-slate-900 font-bold text-lg mb-1 leading-snug">
+                                        {display.primary}
+                                      </p>
+                                      {display.secondary && (
+                                        <p className="text-[11px] text-slate-500 font-semibold">
+                                          {display.secondary}
+                                        </p>
+                                      )}
+                                    </>
+                                  );
+                                })()}
                                 <div className="flex gap-2 mb-4">
                                   {record.icons?.map((icon, idx) => (
                                     <IconDisplay key={idx} type={icon} />
@@ -2838,7 +3081,7 @@ const App: React.FC = () => {
       </main>
 
       {/* Patient Selector Overlay */}
-      {showPatientSelector && <PatientSelector />}
+      {showPatientSelector && <SelectPatientModal />}
 
       {/* QR Overlay */}
       {showQR && (
