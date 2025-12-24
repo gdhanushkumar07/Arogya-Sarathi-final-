@@ -68,6 +68,7 @@ import PatientImageUpload from "./components/PatientImageUpload";
 import DoctorDashboard from "./components/DoctorDashboard";
 import { processingService } from "./services/processingService";
 import { reminderService } from "./services/reminderService";
+import SymptomHistoryService from "./services/symptomHistoryService";
 
 const STATE_LANGUAGE_MAP: Record<string, SupportedLanguage> = {
   Telangana: "Telugu",
@@ -156,7 +157,10 @@ const saveActivePatientToStorage = (patient: PatientProfile | null) => {
     if (patient) {
       localStorage.setItem(ACTIVE_PATIENT_STORAGE_KEY, JSON.stringify(patient));
       // Keep legacy keys in sync to avoid regressions
-      localStorage.setItem("hv_current_patient_profile", JSON.stringify(patient));
+      localStorage.setItem(
+        "hv_current_patient_profile",
+        JSON.stringify(patient)
+      );
       localStorage.setItem("hv_patient_profile", JSON.stringify(patient));
     } else {
       localStorage.removeItem(ACTIVE_PATIENT_STORAGE_KEY);
@@ -411,20 +415,114 @@ const App: React.FC = () => {
     } catch (error) {
       console.error("Failed to fetch patient messages:", error);
     }
-  }, [patientProfile]);
+  }, [patientProfile?.patientId]);
 
   // Load patient data when patient profile changes
   useEffect(() => {
     if (patientProfile) {
       console.log("📂 Loading data for patient:", patientProfile.patientId);
 
-      // Load vault data
-      const vaultKey = getPatientStorageKey(patientProfile.patientId, "vault");
-      const savedVault = localStorage.getItem(vaultKey);
-      if (savedVault) {
-        setVault(JSON.parse(savedVault));
-      } else {
-        // Initialize with patient profile data (include all fields for doctor view)
+      try {
+        // Load vault data
+        const vaultKey = getPatientStorageKey(
+          patientProfile.patientId,
+          "vault"
+        );
+        const savedVault = localStorage.getItem(vaultKey);
+        console.log(
+          "🔍 Vault key:",
+          vaultKey,
+          "| Found in storage:",
+          !!savedVault
+        );
+        console.log("localStorage value:", savedVault);
+
+        if (savedVault) {
+          const parsed = JSON.parse(savedVault);
+          console.log(
+            "✅ Loaded vault from storage with",
+            parsed.records?.length || 0,
+            "records"
+          );
+          console.log("Loaded vault object:", parsed);
+          setVault(parsed);
+        } else {
+          // Initialize with patient profile data (include all fields for doctor view)
+          console.log("📝 Initializing new vault for patient");
+          const newVault = {
+            patientId: patientProfile.patientId,
+            name: patientProfile.name,
+            age: patientProfile.age,
+            location: patientProfile.location,
+            state: patientProfile.state,
+            language: patientProfile.language,
+            phoneNumber: patientProfile.phoneNumber,
+            houseNumber: patientProfile.houseNumber,
+            streetVillage: patientProfile.streetVillage,
+            district: patientProfile.district,
+            records: [],
+          };
+          console.log("New vault object:", newVault);
+          setVault(newVault);
+        }
+
+        // 🆕 RESTORE SYMPTOM HISTORY FROM PERSISTENT STORAGE
+        const symptoms = SymptomHistoryService.getSymptomHistory(
+          patientProfile.patientId
+        );
+        if (symptoms.length > 0) {
+          console.log(
+            `📝 Restoring ${symptoms.length} symptoms from persistent history`
+          );
+          // Convert stored symptoms back to medical records for vault display
+          const symptomRecords = symptoms.map((sym) => ({
+            id: sym.id,
+            type: "SYMPTOM" as MedicalRecord["type"],
+            content: sym.content,
+            timestamp: sym.timestamp,
+            status: (sym.synced
+              ? "SYNCED"
+              : "PENDING") as MedicalRecord["status"],
+            severity: sym.severity,
+          }));
+
+          setVault((prev) => {
+            // Ensure prev.records is always an array before filtering
+            const currentRecords = Array.isArray(prev.records)
+              ? prev.records
+              : [];
+
+            // Merge persistent symptom history with current vault records
+            // Remove any duplicate symptom records first
+            const nonSymptomRecords = currentRecords.filter(
+              (r) => r.type !== "SYMPTOM"
+            );
+            const allRecords = [...nonSymptomRecords, ...symptomRecords];
+
+            return { ...prev, records: allRecords };
+          });
+        }
+
+        // Load sync pool data
+        const syncKey = getPatientStorageKey(
+          patientProfile.patientId,
+          "syncPool"
+        );
+        const savedSync = localStorage.getItem(syncKey);
+        if (savedSync) {
+          setSyncPool(JSON.parse(savedSync));
+        }
+
+        // Fetch messages from backend
+        fetchPatientMessages();
+
+        // Initialize medicine reminders for this patient
+        reminderService.startReminderChecks(patientProfile.patientId);
+
+        console.log("Patient data loaded for:", patientProfile.name);
+      } catch (error) {
+        console.error("Error loading patient data:", error);
+        // Initialize empty vault on error
         setVault({
           patientId: patientProfile.patientId,
           name: patientProfile.name,
@@ -439,24 +537,6 @@ const App: React.FC = () => {
           records: [],
         });
       }
-
-      // Load sync pool data
-      const syncKey = getPatientStorageKey(
-        patientProfile.patientId,
-        "syncPool"
-      );
-      const savedSync = localStorage.getItem(syncKey);
-      if (savedSync) {
-        setSyncPool(JSON.parse(savedSync));
-      }
-
-      // Fetch messages from backend
-      fetchPatientMessages();
-
-      // Initialize medicine reminders for this patient
-      reminderService.startReminderChecks(patientProfile.patientId);
-
-      console.log("Patient data loaded for:", patientProfile.name);
     }
   }, [patientProfile, fetchPatientMessages]);
 
@@ -666,9 +746,48 @@ const App: React.FC = () => {
     savePatientsToStorage(availablePatients);
   }, [availablePatients]);
 
+  // ✅ PERSIST VAULT CHANGES TO LOCALSTORAGE - FIX FOR SYMPTOM LOSS BUG
+  // When patient adds symptoms, voice notes, or visual records, save immediately to localStorage
+  useEffect(() => {
+    if (patientProfile?.patientId && vault.patientId) {
+      try {
+        const vaultKey = getPatientStorageKey(
+          patientProfile.patientId,
+          "vault"
+        );
+        const vaultData = JSON.stringify(vault);
+        localStorage.setItem(vaultKey, vaultData);
+
+        // Verify it was saved
+        const verification = localStorage.getItem(vaultKey);
+        const isVerified = verification === vaultData;
+
+        console.log(
+          `💾 Vault persisted for ${patientProfile.name}:`,
+          Array.isArray(vault.records) ? vault.records.length : 0,
+          "records | Verified:",
+          isVerified,
+          "| Key:",
+          vaultKey
+        );
+
+        if (!isVerified) {
+          console.error("⚠️ WARNING: Vault save verification failed!");
+        }
+      } catch (error) {
+        console.error("❌ Error persisting vault to localStorage:", error);
+      }
+    } else {
+      console.log(
+        "⚠️ Vault persistence skipped - Missing patientProfile or vault.patientId"
+      );
+    }
+  }, [vault, patientProfile?.patientId, patientProfile?.name]);
+
   const requestTranslation = useCallback(
     async (key: string, original: string) => {
-      if (!original || selectedLanguage === "English" || translations[key]) return;
+      if (!original || selectedLanguage === "English" || translations[key])
+        return;
       const translated = await translateText(original, selectedLanguage);
       setTranslations((prev) => ({
         ...prev,
@@ -712,9 +831,11 @@ const App: React.FC = () => {
 
   // Background Sync Logic - send to backend for storage
   const triggerSync = useCallback(async () => {
-    if (isSyncing || userRole !== "PATIENT") return;
+    if (isSyncing || userRole !== "PATIENT" || !patientProfile) return;
 
-    const pendingRecords = vault.records.filter((r) => r.status === "PENDING");
+    const pendingRecords = (vault.records || []).filter(
+      (r) => r.status === "PENDING"
+    );
     if (pendingRecords.length === 0) return;
 
     console.log(
@@ -732,23 +853,27 @@ const App: React.FC = () => {
 
       if (visualRecords.length > 0) {
         console.log("📷 Processing visual triage data");
-        const triage = await processingService.triageVisualData(
-          visualRecords[0].media!.lowResData
-        );
-        visualSummary = `[Triage Analysis: ${triage.findings}]`;
+        try {
+          const triage = await processingService.triageVisualData(
+            visualRecords[0].media!.lowResData
+          );
+          visualSummary = `[Triage Analysis: ${triage.findings}]`;
 
-        setVault((prev) => ({
-          ...prev,
-          records: prev.records.map((r) =>
-            r.id === visualRecords[0].id
-              ? {
-                  ...r,
-                  media: { ...r.media!, analysis: triage.findings },
-                  severity: triage.urgency as any,
-                }
-              : r
-          ),
-        }));
+          setVault((prev) => ({
+            ...prev,
+            records: (prev.records || []).map((r) =>
+              r.id === visualRecords[0].id
+                ? {
+                    ...r,
+                    media: { ...r.media!, analysis: triage.findings },
+                    severity: triage.urgency as any,
+                  }
+                : r
+            ),
+          }));
+        } catch (error) {
+          console.error("Error processing visual triage:", error);
+        }
       }
 
       const symptomsText = pendingRecords
@@ -758,45 +883,65 @@ const App: React.FC = () => {
 
       console.log("🩺 Symptoms to sync:", symptomsText);
 
-      if (symptomsText && patientProfile) {
-        // Ensure vault has complete patient data before syncing
-        const completeVault = {
-          ...vault,
-          patientId: patientProfile.patientId,
-          name: patientProfile.name,
-          age: patientProfile.age,
-          location: patientProfile.location,
-          state: patientProfile.state,
-          language: patientProfile.language,
-          phoneNumber: patientProfile.phoneNumber,
-          houseNumber: patientProfile.houseNumber,
-          streetVillage: patientProfile.streetVillage,
-          district: patientProfile.district,
-        };
+      if (symptomsText) {
+        try {
+          // Ensure vault has complete patient data before syncing
+          const completeVault = {
+            ...vault,
+            patientId: patientProfile.patientId,
+            name: patientProfile.name,
+            age: patientProfile.age,
+            location: patientProfile.location,
+            state: patientProfile.state,
+            language: patientProfile.language,
+            phoneNumber: patientProfile.phoneNumber,
+            houseNumber: patientProfile.houseNumber,
+            streetVillage: patientProfile.streetVillage,
+            district: patientProfile.district,
+          };
 
-        console.log("Creating sync packet with real patient data:", {
-          patientName: patientProfile.name,
-          patientAge: patientProfile.age,
-          patientLocation: patientProfile.location,
-        });
+          console.log("Creating sync packet with real patient data:", {
+            patientName: patientProfile.name,
+            patientAge: patientProfile.age,
+            patientLocation: patientProfile.location,
+          });
 
-        const delta = await processingService.generateDeltaSync(
-          completeVault,
-          symptomsText
-        );
+          const delta = await processingService.generateDeltaSync(
+            completeVault,
+            symptomsText
+          );
 
-        console.log("Delta sync sent to backend:", delta);
+          console.log("Delta sync sent to backend:", delta);
 
-        // Note: sync packets are now stored in backend, not locally
-        // Doctors will fetch them from the backend
+          // Note: sync packets are now stored in backend, not locally
+          // Doctors will fetch them from the backend
+        } catch (error) {
+          console.error("Error creating delta sync:", error);
+        }
       }
 
       setVault((prev) => ({
         ...prev,
-        records: prev.records.map((r) =>
+        records: (prev.records || []).map((r) =>
           r.status === "PENDING" ? { ...r, status: "SYNCED" } : r
         ),
       }));
+
+      // 🆕 MARK SYMPTOMS AS SYNCED IN PERSISTENT STORAGE
+      const symptomIds = pendingRecords
+        .filter((r) => r.type === "SYMPTOM")
+        .map((r) => r.id);
+
+      if (symptomIds.length > 0) {
+        try {
+          SymptomHistoryService.markSymptomsSynced(
+            patientProfile.patientId,
+            symptomIds
+          );
+        } catch (error) {
+          console.error("Error marking symptoms as synced:", error);
+        }
+      }
 
       console.log("Sync completed successfully");
     } catch (error) {
@@ -807,11 +952,12 @@ const App: React.FC = () => {
   }, [
     network,
     vault.records,
-    isSyncing,
-    userRole,
     vault.name,
     vault.location,
     vault.state,
+    isSyncing,
+    userRole,
+    patientProfile,
   ]);
 
   // Doctor: Fetch sync packets from backend
@@ -901,8 +1047,26 @@ const App: React.FC = () => {
   };
 
   // Actions
-  const handleRecordSymptom = () => {
-    if (!newSymptom.trim()) return;
+  const handleRecordSymptom = useCallback(() => {
+    console.log("🔴 handleRecordSymptom called");
+    console.log("newSymptom:", newSymptom);
+    console.log("newSymptom.trim():", newSymptom.trim());
+
+    if (!newSymptom.trim()) {
+      console.log("⚠️ newSymptom is empty, returning early");
+      return;
+    }
+
+    if (!patientProfile) {
+      console.error("⚠️ No patient profile available");
+      return;
+    }
+
+    console.log("📝 Recording symptom:", newSymptom);
+    console.log("Current vault:", vault);
+    console.log("Current vault.records:", vault.records);
+    console.log("Current vault.records.length:", vault.records?.length || 0);
+
     const record: MedicalRecord = {
       id: `SYM-${Date.now()}`,
       type: "SYMPTOM",
@@ -911,13 +1075,79 @@ const App: React.FC = () => {
       status: "PENDING",
       severity: "MEDIUM",
     };
-    setVault((prev) => ({ ...prev, records: [...prev.records, record] }));
+
+    console.log("Creating record:", record);
+
+    setVault((prev) => {
+      console.log("setVault callback - prev:", prev);
+      console.log("setVault callback - prev.records:", prev.records);
+      console.log(
+        "setVault callback - Array.isArray(prev.records):",
+        Array.isArray(prev.records)
+      );
+
+      try {
+        // Ensure prev.records is always an array
+        const currentRecords = Array.isArray(prev.records) ? prev.records : [];
+        const updatedRecords = [...currentRecords, record];
+
+        // Ensure vault has patient identifiers so persistence works
+        const updated = {
+          ...prev,
+          patientId: prev.patientId || patientProfile?.patientId || "",
+          name: prev.name || patientProfile?.name || "",
+          age: prev.age || patientProfile?.age || 0,
+          location: prev.location || patientProfile?.location || "",
+          state: prev.state || patientProfile?.state || "",
+          language: prev.language || patientProfile?.language || "English",
+          phoneNumber: prev.phoneNumber || patientProfile?.phoneNumber || "",
+          houseNumber: prev.houseNumber || patientProfile?.houseNumber || "",
+          streetVillage:
+            prev.streetVillage || patientProfile?.streetVillage || "",
+          district: prev.district || patientProfile?.district || "",
+          records: updatedRecords,
+        };
+        console.log(
+          "✅ Vault updated with new record. Total records now:",
+          updated.records.length
+        );
+        console.log("Updated vault:", updated);
+        return updated;
+      } catch (error) {
+        console.error("❌ Error updating vault:", error);
+        // Return previous state on error
+        return prev;
+      }
+    });
+
+    // 🆕 STORE SYMPTOM IN PERSISTENT HISTORY
+    try {
+      const savedSymptom = SymptomHistoryService.addSymptom(
+        patientProfile.patientId,
+        newSymptom,
+        "MEDIUM"
+      );
+      console.log("✅ Symptom saved to persistent history:", savedSymptom);
+    } catch (error) {
+      console.error("❌ Failed to save symptom to persistent history:", error);
+    }
+
+    // Clear the input immediately
     setNewSymptom("");
     setIsRecordingUI(false);
+
     // 🚀 FORCE SYNC IMMEDIATELY
     console.log("🔥 calling triggerSync after symptom");
-    triggerSync();
-  };
+
+    // Use setTimeout to ensure state update is complete before sync
+    setTimeout(() => {
+      try {
+        triggerSync();
+      } catch (error) {
+        console.error("❌ Error during sync:", error);
+      }
+    }, 100);
+  }, [newSymptom, patientProfile, triggerSync]);
 
   const handleMediaUpload = async (
     event: React.ChangeEvent<HTMLInputElement>
@@ -995,8 +1225,9 @@ const App: React.FC = () => {
         }
       );
 
-      const translation =
-        translationResponse.ok ? await translationResponse.json() : null;
+      const translation = translationResponse.ok
+        ? await translationResponse.json()
+        : null;
 
       // Persist the doctor message so patients can fetch it later
       const response = await fetch(
@@ -1585,7 +1816,9 @@ const App: React.FC = () => {
             <p className="text-[11px] font-black text-indigo-500 uppercase tracking-[0.25em]">
               Patient Portal
             </p>
-            <h3 className="text-xl font-black text-slate-900">Select Patient</h3>
+            <h3 className="text-xl font-black text-slate-900">
+              Select Patient
+            </h3>
           </div>
           <button
             onClick={() => setShowPatientSelector(false)}
@@ -1618,7 +1851,9 @@ const App: React.FC = () => {
               >
                 <div
                   className={`w-12 h-12 rounded-2xl flex items-center justify-center ${
-                    isActive ? "bg-indigo-600 text-white" : "bg-slate-100 text-indigo-600"
+                    isActive
+                      ? "bg-indigo-600 text-white"
+                      : "bg-slate-100 text-indigo-600"
                   }`}
                 >
                   <User size={22} />
@@ -2095,106 +2330,197 @@ const App: React.FC = () => {
                     <User size={14} /> <span>My Symptoms & Records</span>
                   </div>
                   {(() => {
-                    const patientRecords = vault.records.filter(
-                      (record) =>
-                        record.type === "SYMPTOM" ||
-                        record.type === "VISUAL_TRIAGE" ||
-                        record.type === "HISTORY"
-                    );
+                    try {
+                      console.log(
+                        "🔍 Rendering symptoms section. Vault:",
+                        vault
+                      );
+                      console.log("vault.records:", vault.records);
+                      console.log(
+                        "Array.isArray(vault.records):",
+                        Array.isArray(vault.records)
+                      );
 
-                    if (patientRecords.length === 0) {
+                      // Safe array check with fallback
+                      const recordsArray = Array.isArray(vault.records)
+                        ? vault.records
+                        : [];
+
+                      console.log(
+                        "✅ Records array validated:",
+                        recordsArray.length
+                      );
+
+                      // Filter for patient symptoms and records
+                      const patientRecords = recordsArray.filter((record) => {
+                        if (!record || !record.type) return false;
+                        return (
+                          record.type === "SYMPTOM" ||
+                          record.type === "VISUAL_TRIAGE" ||
+                          record.type === "HISTORY"
+                        );
+                      });
+
+                      console.log(
+                        "📊 Filtered patient records:",
+                        patientRecords.length,
+                        patientRecords
+                      );
+
+                      if (patientRecords.length === 0) {
+                        return (
+                          <div className="text-center py-16 bg-white rounded-[40px] border border-slate-100 shadow-sm">
+                            <User
+                              className="mx-auto mb-4 text-slate-200"
+                              size={48}
+                            />
+                            <p className="text-slate-400 text-xs font-bold">
+                              No symptoms recorded yet.
+                            </p>
+                          </div>
+                        );
+                      }
+
+                      return patientRecords
+                        .slice()
+                        .reverse()
+                        .map((record, index) => {
+                          try {
+                            if (!record || !record.id) {
+                              console.warn("⚠️ Invalid record found:", record);
+                              return null;
+                            }
+
+                            return (
+                              <div
+                                key={record.id}
+                                className="bg-white rounded-[40px] p-8 border border-slate-100 shadow-sm transition-all hover:shadow-md hover:border-indigo-100 group"
+                              >
+                                <div className="flex items-start gap-6">
+                                  <div className="bg-indigo-50 text-indigo-600 group-hover:bg-indigo-600 group-hover:text-white p-4 rounded-3xl transition-colors">
+                                    {record.type === "VISUAL_TRIAGE" ? (
+                                      <Camera size={28} />
+                                    ) : (
+                                      <Activity size={28} />
+                                    )}
+                                  </div>
+                                  <div className="flex-1">
+                                    <div className="flex justify-between items-center mb-3">
+                                      <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                                        {new Date(
+                                          record.timestamp
+                                        ).toLocaleDateString()}{" "}
+                                        •{" "}
+                                        {new Date(
+                                          record.timestamp
+                                        ).toLocaleTimeString([], {
+                                          hour: "2-digit",
+                                          minute: "2-digit",
+                                        })}
+                                      </span>
+                                      {record.status === "PENDING" && (
+                                        <div className="flex items-center gap-1.5 bg-amber-50 text-amber-700 text-[9px] font-black px-3 py-1 rounded-full uppercase">
+                                          <Wifi size={10} /> Local Storage
+                                        </div>
+                                      )}
+                                    </div>
+                                    {(() => {
+                                      try {
+                                        const display = getDisplayText(
+                                          `local-${record.id}`,
+                                          record.content || ""
+                                        );
+                                        return (
+                                          <>
+                                            <p className="text-slate-900 font-bold text-lg mb-1 leading-snug">
+                                              {display.primary}
+                                            </p>
+                                            {display.secondary && (
+                                              <p className="text-[11px] text-slate-500 font-semibold">
+                                                {display.secondary}
+                                              </p>
+                                            )}
+                                          </>
+                                        );
+                                      } catch (error) {
+                                        console.error(
+                                          "❌ Error displaying record:",
+                                          error,
+                                          record
+                                        );
+                                        return (
+                                          <p className="text-red-500 text-sm">
+                                            Error displaying content
+                                          </p>
+                                        );
+                                      }
+                                    })()}
+                                    {record.media?.analysis && (
+                                      <p className="text-[10px] font-bold text-indigo-500 mb-3 uppercase tracking-wider">
+                                        Status: {record.media.analysis}
+                                      </p>
+                                    )}
+                                    <button
+                                      onClick={() =>
+                                        playVoiceBack(
+                                          record.id,
+                                          record.translatedContent ||
+                                            record.content ||
+                                            ""
+                                        )
+                                      }
+                                      className="flex items-center gap-3 text-xs font-black uppercase text-indigo-600 bg-indigo-50 px-6 py-3 rounded-2xl transition-all hover:bg-indigo-100 active:scale-95"
+                                    >
+                                      {isPlaying === record.id ? (
+                                        <Loader2
+                                          className="animate-spin"
+                                          size={16}
+                                        />
+                                      ) : (
+                                        <Volume2 size={16} />
+                                      )}
+                                      Play Instruction
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          } catch (error) {
+                            console.error(
+                              "❌ Error rendering record:",
+                              error,
+                              record
+                            );
+                            return (
+                              <div
+                                key={`error-${index}`}
+                                className="bg-red-50 rounded-[40px] p-8 border border-red-100 shadow-sm"
+                              >
+                                <p className="text-red-500 text-sm font-bold">
+                                  Error displaying record
+                                </p>
+                              </div>
+                            );
+                          }
+                        })
+                        .filter(Boolean); // Remove null/error components
+                    } catch (error) {
+                      console.error(
+                        "❌ Critical error in symptoms display:",
+                        error
+                      );
                       return (
-                        <div className="text-center py-16 bg-white rounded-[40px] border border-slate-100 shadow-sm">
-                          <User
-                            className="mx-auto mb-4 text-slate-200"
+                        <div className="text-center py-16 bg-white rounded-[40px] border border-red-100 shadow-sm">
+                          <AlertCircle
+                            className="mx-auto mb-4 text-red-200"
                             size={48}
                           />
-                          <p className="text-slate-400 text-xs font-bold">
-                            No symptoms recorded yet.
+                          <p className="text-red-400 text-xs font-bold">
+                            Error loading symptoms. Please refresh the page.
                           </p>
                         </div>
                       );
                     }
-
-                    return patientRecords
-                      .slice()
-                      .reverse()
-                      .map((record) => (
-                        <div
-                          key={record.id}
-                          className="bg-white rounded-[40px] p-8 border border-slate-100 shadow-sm transition-all hover:shadow-md hover:border-indigo-100 group"
-                        >
-                          <div className="flex items-start gap-6">
-                            <div className="bg-indigo-50 text-indigo-600 group-hover:bg-indigo-600 group-hover:text-white p-4 rounded-3xl transition-colors">
-                              {record.type === "VISUAL_TRIAGE" ? (
-                                <Camera size={28} />
-                              ) : (
-                                <Activity size={28} />
-                              )}
-                            </div>
-                            <div className="flex-1">
-                              <div className="flex justify-between items-center mb-3">
-                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                                  {new Date(
-                                    record.timestamp
-                                  ).toLocaleDateString()}{" "}
-                                  •{" "}
-                                  {new Date(
-                                    record.timestamp
-                                  ).toLocaleTimeString([], {
-                                    hour: "2-digit",
-                                    minute: "2-digit",
-                                  })}
-                                </span>
-                                {record.status === "PENDING" && (
-                                  <div className="flex items-center gap-1.5 bg-amber-50 text-amber-700 text-[9px] font-black px-3 py-1 rounded-full uppercase">
-                                    <Wifi size={10} /> Local Storage
-                                  </div>
-                                )}
-                              </div>
-                              {(() => {
-                                const display = getDisplayText(
-                                  `local-${record.id}`,
-                                  record.content
-                                );
-                                return (
-                                  <>
-                                    <p className="text-slate-900 font-bold text-lg mb-1 leading-snug">
-                                      {display.primary}
-                                    </p>
-                                    {display.secondary && (
-                                      <p className="text-[11px] text-slate-500 font-semibold">
-                                        {display.secondary}
-                                      </p>
-                                    )}
-                                  </>
-                                );
-                              })()}
-                              {record.media?.analysis && (
-                                <p className="text-[10px] font-bold text-indigo-500 mb-3 uppercase tracking-wider">
-                                  Status: {record.media.analysis}
-                                </p>
-                              )}
-                              <button
-                                onClick={() =>
-                                  playVoiceBack(
-                                    record.id,
-                                    record.translatedContent || record.content!
-                                  )
-                                }
-                                className="flex items-center gap-3 text-xs font-black uppercase text-indigo-600 bg-indigo-50 px-6 py-3 rounded-2xl transition-all hover:bg-indigo-100 active:scale-95"
-                              >
-                                {isPlaying === record.id ? (
-                                  <Loader2 className="animate-spin" size={16} />
-                                ) : (
-                                  <Volume2 size={16} />
-                                )}
-                                Play Instruction
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      ));
                   })()}
                 </div>
               </div>
@@ -2985,7 +3311,7 @@ const App: React.FC = () => {
               patientDistrict={patientProfile.district}
               patientState={patientProfile.state}
               onCaseCreated={(c) => {
-                console.log('App: patient case created', c.caseId);
+                console.log("App: patient case created", c.caseId);
                 // optional: refresh any patient-specific UI here
               }}
             />
@@ -2995,10 +3321,16 @@ const App: React.FC = () => {
         {userRole === "DOCTOR" && doctorProfile && (
           <div className="space-y-6">
             <DoctorDashboard
-              doctorId={(doctorProfile as any).id || (doctorProfile as any).doctorId || 'DOC-1'}
+              doctorId={
+                (doctorProfile as any).id ||
+                (doctorProfile as any).doctorId ||
+                "DOC-1"
+              }
               doctorName={doctorProfile.name}
-              specialization={(doctorProfile as any).specialization || 'General'}
-              clinicId={(doctorProfile as any).clinicId || 'CLINIC-1'}
+              specialization={
+                (doctorProfile as any).specialization || "General"
+              }
+              clinicId={(doctorProfile as any).clinicId || "CLINIC-1"}
             />
           </div>
         )}
