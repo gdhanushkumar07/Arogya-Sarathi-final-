@@ -64,6 +64,8 @@ import { ConnectivitySim } from "./components/ConnectivitySim";
 import EmergencyHospitalFinder from "./components/EmergencyHospitalFinder";
 import MedicineReminder from "./components/MedicineReminder";
 import MedicineOrdering from "./components/MedicineOrdering";
+import PatientImageUpload from "./components/PatientImageUpload";
+import DoctorDashboard from "./components/DoctorDashboard";
 import { processingService } from "./services/processingService";
 import { reminderService } from "./services/reminderService";
 
@@ -2969,6 +2971,35 @@ const App: React.FC = () => {
                 )}
               </div>
             )}
+          </div>
+        )}
+
+        {/* PATIENT / DOCTOR QUICK INTEGRATION */}
+        {userRole === "PATIENT" && patientProfile && (
+          <div className="space-y-6">
+            <PatientImageUpload
+              patientId={patientProfile.patientId}
+              patientName={patientProfile.name}
+              patientAge={patientProfile.age}
+              patientPhone={patientProfile.phoneNumber}
+              patientDistrict={patientProfile.district}
+              patientState={patientProfile.state}
+              onCaseCreated={(c) => {
+                console.log('App: patient case created', c.caseId);
+                // optional: refresh any patient-specific UI here
+              }}
+            />
+          </div>
+        )}
+
+        {userRole === "DOCTOR" && doctorProfile && (
+          <div className="space-y-6">
+            <DoctorDashboard
+              doctorId={(doctorProfile as any).id || (doctorProfile as any).doctorId || 'DOC-1'}
+              doctorName={doctorProfile.name}
+              specialization={(doctorProfile as any).specialization || 'General'}
+              clinicId={(doctorProfile as any).clinicId || 'CLINIC-1'}
+            />
           </div>
         )}
 
