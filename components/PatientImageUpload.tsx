@@ -1,16 +1,16 @@
-import React, { useRef, useState, useEffect } from 'react';
-import { Camera, Upload, Loader2, AlertCircle, RefreshCw } from 'lucide-react';
+import React, { useRef, useState, useEffect } from "react";
+import { Camera, Upload, Loader2, AlertCircle, RefreshCw } from "lucide-react";
 import {
   createMedicalCase,
   getCasesByPatient,
   MedicalCase,
-} from '../services/medicalCasesService';
+} from "../services/medicalCasesService";
 import {
   fileToBase64,
   validateFileSize,
   createImageThumbnail,
   getAvailableStorageSpace,
-} from '../utils/imageConverterFixed';
+} from "../utils/imageConverterFixed";
 
 interface PatientImageUploadProps {
   patientId: string;
@@ -24,10 +24,10 @@ interface PatientImageUploadProps {
 
 /**
  * PATIENT IMAGE UPLOAD COMPONENT
- * 
+ *
  * This component handles the patient uploading medical images
  * It properly converts File → Base64 → localStorage
- * 
+ *
  * Root cause fix:
  * - ❌ OLD: Store File objects directly (not JSON-serializable)
  * - ✅ NEW: Convert to Base64 string, save to medicalCases key
@@ -45,16 +45,35 @@ export const PatientImageUpload: React.FC<PatientImageUploadProps> = ({
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [myCases, setMyCases] = useState<MedicalCase[]>(() =>
     getCasesByPatient(patientId)
   );
+
+  // Monitor network status
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, []);
 
   // 🔄 Auto-refresh cases every 3 seconds to see doctor replies
   useEffect(() => {
     const refreshCases = () => {
       const updatedCases = getCasesByPatient(patientId);
       setMyCases(updatedCases);
-      console.log('🔄 Patient cases refreshed, found', updatedCases.length, 'cases');
+      console.log(
+        "🔄 Patient cases refreshed, found",
+        updatedCases.length,
+        "cases"
+      );
     };
 
     refreshCases(); // Initial load
@@ -68,6 +87,14 @@ export const PatientImageUpload: React.FC<PatientImageUploadProps> = ({
     const file = event.target.files?.[0];
     if (!file) return;
 
+    // Check network status before allowing upload
+    if (!isOnline) {
+      setError(
+        "❌ No internet connection. Please check your network and try again."
+      );
+      return;
+    }
+
     setError(null);
     setSuccess(null);
     setUploading(true);
@@ -75,19 +102,19 @@ export const PatientImageUpload: React.FC<PatientImageUploadProps> = ({
     try {
       // ✅ Step 1: Validate file size
       if (!validateFileSize(file, 5)) {
-        throw new Error('File too large (max 5MB)');
+        throw new Error("File too large (max 5MB)");
       }
 
       // ✅ Step 2: Convert File to Base64
-      console.log('🔄 Converting image to Base64...');
+      console.log("🔄 Converting image to Base64...");
       const base64 = await fileToBase64(file);
 
       // ✅ Step 3: Create thumbnail to save localStorage space
-      console.log('🎨 Creating thumbnail...');
+      console.log("🎨 Creating thumbnail...");
       const thumbnail = await createImageThumbnail(base64, 640, 480);
 
       // ✅ Step 4: Create medical case with Base64 image
-      console.log('💾 Saving to localStorage...');
+      console.log("💾 Saving to localStorage...");
       const medicalCase = createMedicalCase(
         patientId,
         patientName,
@@ -109,7 +136,7 @@ export const PatientImageUpload: React.FC<PatientImageUploadProps> = ({
       setSuccess(
         `✅ Image uploaded! Case ID: ${medicalCase.caseId.substring(0, 20)}...`
       );
-      console.log('✅ Medical case created:', medicalCase);
+      console.log("✅ Medical case created:", medicalCase);
 
       // Check storage usage
       const space = getAvailableStorageSpace();
@@ -119,11 +146,11 @@ export const PatientImageUpload: React.FC<PatientImageUploadProps> = ({
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       setError(`❌ Upload failed: ${errorMessage}`);
-      console.error('Upload error:', err);
+      console.error("Upload error:", err);
     } finally {
       setUploading(false);
       if (fileInputRef.current) {
-        fileInputRef.current.value = '';
+        fileInputRef.current.value = "";
       }
     }
   };
@@ -160,17 +187,52 @@ export const PatientImageUpload: React.FC<PatientImageUploadProps> = ({
             </div>
           )}
 
+          {/* Network Status Indicator */}
+          <div className="flex items-center justify-between bg-slate-50 rounded-2xl p-4 border border-slate-200">
+            <div className="flex items-center gap-3">
+              <div
+                className={`w-3 h-3 rounded-full ${
+                  isOnline ? "bg-emerald-500" : "bg-red-500"
+                }`}
+              ></div>
+              <span
+                className={`text-sm font-bold ${
+                  isOnline ? "text-emerald-700" : "text-red-700"
+                }`}
+              >
+                {isOnline
+                  ? "✅ Online - Image upload available"
+                  : "❌ Offline - Image upload disabled"}
+              </span>
+            </div>
+            <button
+              onClick={() => window.location.reload()}
+              className="text-xs font-bold text-slate-600 hover:text-slate-800 bg-white px-3 py-1 rounded-full border border-slate-200 transition-colors"
+            >
+              Refresh Status
+            </button>
+          </div>
+
           {/* Upload Button */}
           <div className="flex gap-4">
             <button
               onClick={() => fileInputRef.current?.click()}
-              disabled={uploading}
-              className="flex-1 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white font-black py-4 px-6 rounded-3xl flex items-center justify-center gap-3 transition-all active:scale-95 disabled:cursor-not-allowed"
+              disabled={uploading || !isOnline}
+              className={`flex-1 font-black py-4 px-6 rounded-3xl flex items-center justify-center gap-3 transition-all active:scale-95 disabled:cursor-not-allowed ${
+                isOnline
+                  ? "bg-indigo-600 hover:bg-indigo-700 text-white"
+                  : "bg-slate-300 text-slate-500 cursor-not-allowed"
+              }`}
             >
               {uploading ? (
                 <>
                   <Loader2 className="animate-spin" size={20} />
                   <span>Converting to Base64...</span>
+                </>
+              ) : !isOnline ? (
+                <>
+                  <AlertCircle size={20} />
+                  <span>Offline - Upload Disabled</span>
                 </>
               ) : (
                 <>
@@ -233,16 +295,16 @@ export const PatientImageUpload: React.FC<PatientImageUploadProps> = ({
                         </p>
                         <p className="text-sm font-bold text-slate-700 mt-1">
                           {medicalCase.images.length} image
-                          {medicalCase.images.length !== 1 ? 's' : ''}
+                          {medicalCase.images.length !== 1 ? "s" : ""}
                         </p>
                       </div>
                       <span
                         className={`text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-wider ${
-                          medicalCase.status === 'PENDING'
-                            ? 'bg-yellow-100 text-yellow-700'
-                            : medicalCase.status === 'REVIEWED'
-                            ? 'bg-blue-100 text-blue-700'
-                            : 'bg-emerald-100 text-emerald-700'
+                          medicalCase.status === "PENDING"
+                            ? "bg-yellow-100 text-yellow-700"
+                            : medicalCase.status === "REVIEWED"
+                            ? "bg-blue-100 text-blue-700"
+                            : "bg-emerald-100 text-emerald-700"
                         }`}
                       >
                         {medicalCase.status}
@@ -268,7 +330,7 @@ export const PatientImageUpload: React.FC<PatientImageUploadProps> = ({
                     {/* Timestamps & Doctor Replies */}
                     <div className="text-xs font-medium text-slate-500 space-y-2">
                       <p>
-                        📅 Created:{' '}
+                        📅 Created:{" "}
                         {new Date(medicalCase.createdAt).toLocaleString()}
                       </p>
                       {medicalCase.replies.length > 0 && (
@@ -285,7 +347,9 @@ export const PatientImageUpload: React.FC<PatientImageUploadProps> = ({
                                 Dr. {reply.doctorName} ({reply.specialization})
                               </p>
                               <p className="text-xs font-medium text-emerald-600 mt-1">
-                                {reply.type === 'PRESCRIPTION' ? '💊 Prescription' : '📋 Note'}
+                                {reply.type === "PRESCRIPTION"
+                                  ? "💊 Prescription"
+                                  : "📋 Note"}
                               </p>
                               <p className="text-xs text-emerald-800 mt-1">
                                 {reply.content}
@@ -318,7 +382,7 @@ export default PatientImageUpload;
 /**
  * USAGE IN PATIENT COMPONENT:
  * ===========================
- * 
+ *
  * <PatientImageUpload
  *   patientId={patientProfile.patientId}
  *   patientName={patientProfile.name}
@@ -330,7 +394,7 @@ export default PatientImageUpload;
  *     console.log('Case created:', medicalCase);
  *   }}
  * />
- * 
+ *
  * WHY THIS WORKS:
  * ===============
  * 1. File input captures the File object
@@ -338,7 +402,7 @@ export default PatientImageUpload;
  * 3. createImageThumbnail() compresses it for localStorage
  * 4. createMedicalCase() saves to localStorage under 'medicalCases' key
  * 5. ✅ Doctor can access same 'medicalCases' key and see the image
- * 
+ *
  * WHAT WAS WRONG BEFORE:
  * ======================
  * - Images stored in patient-specific keys (hv_vault_PAT-xxx)

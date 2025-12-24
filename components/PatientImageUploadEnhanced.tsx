@@ -1,17 +1,25 @@
-import React, { useRef, useState, useEffect } from 'react';
-import { Camera, Upload, Loader2, AlertCircle, Bell, ChevronDown, ChevronUp } from 'lucide-react';
+import React, { useRef, useState, useEffect } from "react";
+import {
+  Camera,
+  Upload,
+  Loader2,
+  AlertCircle,
+  Bell,
+  ChevronDown,
+  ChevronUp,
+} from "lucide-react";
 import {
   createMedicalCase,
   getCasesByPatient,
   MedicalCase,
-} from '../services/medicalCasesService';
+} from "../services/medicalCasesService";
 import {
   fileToBase64,
   validateFileSize,
   createImageThumbnail,
   getAvailableStorageSpace,
   getImageUrl,
-} from '../utils/imageConverterFixed';
+} from "../utils/imageConverterFixed";
 
 interface PatientImageUploadEnhancedProps {
   patientId: string;
@@ -25,7 +33,7 @@ interface PatientImageUploadEnhancedProps {
 
 /**
  * ENHANCED PATIENT IMAGE UPLOAD COMPONENT
- * 
+ *
  * ✅ NEW FEATURES:
  * - Auto-refresh every 5 seconds (sees doctor replies)
  * - Storage event listener (cross-tab updates)
@@ -33,13 +41,15 @@ interface PatientImageUploadEnhancedProps {
  * - Reply count badges
  * - Expandable reply view
  * - Real-time 2-way communication
- * 
+ *
  * ROOT CAUSE FIX:
  * The patient couldn't see doctor replies because:
  * - ❌ OLD: No auto-refresh mechanism
  * - ✅ NEW: Polling + storage events = instant updates
  */
-export const PatientImageUploadEnhanced: React.FC<PatientImageUploadEnhancedProps> = ({
+export const PatientImageUploadEnhanced: React.FC<
+  PatientImageUploadEnhancedProps
+> = ({
   patientId,
   patientName,
   patientAge,
@@ -52,27 +62,44 @@ export const PatientImageUploadEnhanced: React.FC<PatientImageUploadEnhancedProp
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [myCases, setMyCases] = useState<MedicalCase[]>(() =>
     getCasesByPatient(patientId)
   );
+
+  // Monitor network status
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, []);
   const [notification, setNotification] = useState<string | null>(null);
   const [expandedCase, setExpandedCase] = useState<string | null>(null);
-  const [previousReplyCounts, setPreviousReplyCounts] = useState<Record<string, number>>({});
+  const [previousReplyCounts, setPreviousReplyCounts] = useState<
+    Record<string, number>
+  >({});
 
   // ==========================================
   // 🔄 REAL-TIME UPDATES - THE FIX!
   // ==========================================
-  
+
   useEffect(() => {
-    console.log('🚀 Patient component mounted - Starting real-time updates');
-    
+    console.log("🚀 Patient component mounted - Starting real-time updates");
+
     // METHOD 1: Polling (Same-tab updates)
     // Refreshes data every 5 seconds to check for doctor replies
     const refreshInterval = setInterval(() => {
-      console.log('🔄 Auto-refreshing patient cases...');
+      console.log("🔄 Auto-refreshing patient cases...");
       const updatedCases = getCasesByPatient(patientId);
       setMyCases(updatedCases);
-      
+
       // Check for new replies
       checkForNewReplies(updatedCases);
     }, 5000); // 5 seconds
@@ -80,25 +107,27 @@ export const PatientImageUploadEnhanced: React.FC<PatientImageUploadEnhancedProp
     // METHOD 2: Storage Events (Cross-tab updates)
     // Fires when localStorage changes in ANOTHER tab/window
     const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === 'medicalCases' && e.newValue) {
-        console.log('📡 Storage event detected - localStorage was updated in another tab!');
+      if (e.key === "medicalCases" && e.newValue) {
+        console.log(
+          "📡 Storage event detected - localStorage was updated in another tab!"
+        );
         const updatedCases = getCasesByPatient(patientId);
         setMyCases(updatedCases);
         checkForNewReplies(updatedCases);
-        
+
         // Show notification
-        setNotification('🔔 New update received!');
+        setNotification("🔔 New update received!");
         setTimeout(() => setNotification(null), 5000);
       }
     };
 
-    window.addEventListener('storage', handleStorageChange);
+    window.addEventListener("storage", handleStorageChange);
 
     // Cleanup on unmount
     return () => {
       clearInterval(refreshInterval);
-      window.removeEventListener('storage', handleStorageChange);
-      console.log('🛑 Patient component unmounted - Stopped real-time updates');
+      window.removeEventListener("storage", handleStorageChange);
+      console.log("🛑 Patient component unmounted - Stopped real-time updates");
     };
   }, [patientId]);
 
@@ -113,12 +142,16 @@ export const PatientImageUploadEnhanced: React.FC<PatientImageUploadEnhancedProp
       if (currentReplyCount > previousCount) {
         // New reply detected!
         const newRepliesCount = currentReplyCount - previousCount;
-        console.log(`🔔 NEW REPLY! Case ${medicalCase.caseId}: ${newRepliesCount} new reply(ies)`);
-        
-        setNotification(
-          `🔔 Doctor replied to your case! (${newRepliesCount} new ${newRepliesCount === 1 ? 'reply' : 'replies'})`
+        console.log(
+          `🔔 NEW REPLY! Case ${medicalCase.caseId}: ${newRepliesCount} new reply(ies)`
         );
-        
+
+        setNotification(
+          `🔔 Doctor replied to your case! (${newRepliesCount} new ${
+            newRepliesCount === 1 ? "reply" : "replies"
+          })`
+        );
+
         // Auto-dismiss notification after 5 seconds
         setTimeout(() => setNotification(null), 5000);
       }
@@ -140,6 +173,14 @@ export const PatientImageUploadEnhanced: React.FC<PatientImageUploadEnhancedProp
     const file = event.target.files?.[0];
     if (!file) return;
 
+    // Check network status before allowing upload
+    if (!isOnline) {
+      setError(
+        "❌ No internet connection. Please check your network and try again."
+      );
+      return;
+    }
+
     setError(null);
     setSuccess(null);
     setUploading(true);
@@ -147,19 +188,19 @@ export const PatientImageUploadEnhanced: React.FC<PatientImageUploadEnhancedProp
     try {
       // Validate file size
       if (!validateFileSize(file, 5)) {
-        throw new Error('File too large (max 5MB)');
+        throw new Error("File too large (max 5MB)");
       }
 
       // Convert File to Base64
-      console.log('🔄 Converting image to Base64...');
+      console.log("🔄 Converting image to Base64...");
       const base64 = await fileToBase64(file);
 
       // Create thumbnail to save localStorage space
-      console.log('🎨 Creating thumbnail...');
+      console.log("🎨 Creating thumbnail...");
       const thumbnail = await createImageThumbnail(base64, 640, 480);
 
       // Create medical case with Base64 image
-      console.log('💾 Saving to localStorage...');
+      console.log("💾 Saving to localStorage...");
       const medicalCase = createMedicalCase(
         patientId,
         patientName,
@@ -187,7 +228,7 @@ export const PatientImageUploadEnhanced: React.FC<PatientImageUploadEnhancedProp
       setSuccess(
         `✅ Image uploaded! Case ID: ${medicalCase.caseId.substring(0, 20)}...`
       );
-      console.log('✅ Medical case created:', medicalCase);
+      console.log("✅ Medical case created:", medicalCase);
 
       // Check storage usage
       const space = getAvailableStorageSpace();
@@ -197,11 +238,11 @@ export const PatientImageUploadEnhanced: React.FC<PatientImageUploadEnhancedProp
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       setError(`❌ Upload failed: ${errorMessage}`);
-      console.error('Upload error:', err);
+      console.error("Upload error:", err);
     } finally {
       setUploading(false);
       if (fileInputRef.current) {
-        fileInputRef.current.value = '';
+        fileInputRef.current.value = "";
       }
     }
   };
@@ -232,7 +273,8 @@ export const PatientImageUploadEnhanced: React.FC<PatientImageUploadEnhancedProp
               📸 Upload Medical Image
             </h3>
             <p className="text-sm font-medium text-slate-600">
-              Patient can upload images. Doctor will see them and reply in real-time.
+              Patient can upload images. Doctor will see them and reply in
+              real-time.
             </p>
             <p className="text-xs font-bold text-emerald-600 mt-2 flex items-center gap-2">
               <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></span>
@@ -258,17 +300,52 @@ export const PatientImageUploadEnhanced: React.FC<PatientImageUploadEnhancedProp
             </div>
           )}
 
+          {/* Network Status Indicator */}
+          <div className="flex items-center justify-between bg-slate-50 rounded-2xl p-4 border border-slate-200">
+            <div className="flex items-center gap-3">
+              <div
+                className={`w-3 h-3 rounded-full ${
+                  isOnline ? "bg-emerald-500" : "bg-red-500"
+                }`}
+              ></div>
+              <span
+                className={`text-sm font-bold ${
+                  isOnline ? "text-emerald-700" : "text-red-700"
+                }`}
+              >
+                {isOnline
+                  ? "✅ Online - Image upload available"
+                  : "❌ Offline - Image upload disabled"}
+              </span>
+            </div>
+            <button
+              onClick={() => window.location.reload()}
+              className="text-xs font-bold text-slate-600 hover:text-slate-800 bg-white px-3 py-1 rounded-full border border-slate-200 transition-colors"
+            >
+              Refresh Status
+            </button>
+          </div>
+
           {/* Upload Button */}
           <div className="flex gap-4">
             <button
               onClick={() => fileInputRef.current?.click()}
-              disabled={uploading}
-              className="flex-1 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white font-black py-4 px-6 rounded-3xl flex items-center justify-center gap-3 transition-all active:scale-95 disabled:cursor-not-allowed"
+              disabled={uploading || !isOnline}
+              className={`flex-1 font-black py-4 px-6 rounded-3xl flex items-center justify-center gap-3 transition-all active:scale-95 disabled:cursor-not-allowed ${
+                isOnline
+                  ? "bg-indigo-600 hover:bg-indigo-700 text-white"
+                  : "bg-slate-300 text-slate-500 cursor-not-allowed"
+              }`}
             >
               {uploading ? (
                 <>
                   <Loader2 className="animate-spin" size={20} />
                   <span>Converting to Base64...</span>
+                </>
+              ) : !isOnline ? (
+                <>
+                  <AlertCircle size={20} />
+                  <span>Offline - Upload Disabled</span>
                 </>
               ) : (
                 <>
@@ -336,11 +413,11 @@ export const PatientImageUploadEnhanced: React.FC<PatientImageUploadEnhancedProp
                       </div>
                       <span
                         className={`text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-wider ${
-                          medicalCase.status === 'PENDING'
-                            ? 'bg-yellow-100 text-yellow-700'
-                            : medicalCase.status === 'REVIEWED'
-                            ? 'bg-blue-100 text-blue-700'
-                            : 'bg-emerald-100 text-emerald-700'
+                          medicalCase.status === "PENDING"
+                            ? "bg-yellow-100 text-yellow-700"
+                            : medicalCase.status === "REVIEWED"
+                            ? "bg-blue-100 text-blue-700"
+                            : "bg-emerald-100 text-emerald-700"
                         }`}
                       >
                         {medicalCase.status}
@@ -351,7 +428,7 @@ export const PatientImageUploadEnhanced: React.FC<PatientImageUploadEnhancedProp
                     <div>
                       <p className="text-xs font-bold text-slate-500 mb-2">
                         📸 {medicalCase.images.length} image
-                        {medicalCase.images.length !== 1 ? 's' : ''}
+                        {medicalCase.images.length !== 1 ? "s" : ""}
                       </p>
                       <div className="grid grid-cols-2 gap-3">
                         {medicalCase.images.slice(0, 4).map((image) => (
@@ -372,7 +449,7 @@ export const PatientImageUploadEnhanced: React.FC<PatientImageUploadEnhancedProp
                     {/* Timestamps */}
                     <div className="text-xs font-medium text-slate-500 space-y-1">
                       <p>
-                        📅 Created:{' '}
+                        📅 Created:{" "}
                         {new Date(medicalCase.createdAt).toLocaleString()}
                       </p>
                     </div>
@@ -399,7 +476,10 @@ export const PatientImageUploadEnhanced: React.FC<PatientImageUploadEnhancedProp
                                 Doctor Replied!
                               </p>
                               <p className="text-xs font-medium text-emerald-600">
-                                {medicalCase.replies.length} {medicalCase.replies.length === 1 ? 'reply' : 'replies'}
+                                {medicalCase.replies.length}{" "}
+                                {medicalCase.replies.length === 1
+                                  ? "reply"
+                                  : "replies"}
                               </p>
                             </div>
                           </div>
@@ -455,7 +535,7 @@ export const PatientImageUploadEnhanced: React.FC<PatientImageUploadEnhancedProp
 
                                   {/* Timestamp */}
                                   <p className="text-xs font-bold text-slate-400">
-                                    ⏰{' '}
+                                    ⏰{" "}
                                     {new Date(reply.timestamp).toLocaleString()}
                                   </p>
                                 </div>
@@ -497,36 +577,36 @@ export default PatientImageUploadEnhanced;
 /**
  * ✅ KEY FEATURES THAT FIX 2-WAY COMMUNICATION:
  * =============================================
- * 
+ *
  * 1. AUTO-REFRESH (Polling):
  *    - Checks for updates every 5 seconds
  *    - Works in same tab
  *    - Detects new doctor replies
- * 
+ *
  * 2. STORAGE EVENTS:
  *    - Listens for localStorage changes
  *    - Works across different tabs
  *    - Instant notifications
- * 
+ *
  * 3. NEW REPLY DETECTION:
  *    - Tracks previous reply counts
  *    - Shows notification banner
  *    - Auto-dismisses after 5 seconds
- * 
+ *
  * 4. EXPANDABLE REPLIES:
  *    - Click to view full reply details
  *    - Shows doctor name, specialization
  *    - Displays medication if prescribed
- * 
+ *
  * 5. REAL-TIME STATUS:
  *    - Shows "Real-time updates active"
  *    - Animated pulse indicator
  *    - Clear status badges
- * 
+ *
  * USAGE:
  * ======
  * Replace PatientImageUpload with PatientImageUploadEnhanced
- * 
+ *
  * <PatientImageUploadEnhanced
  *   patientId={patientProfile.patientId}
  *   patientName={patientProfile.name}

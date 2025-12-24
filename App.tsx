@@ -46,6 +46,7 @@ import {
   AlertTriangle,
   Pill,
   ShoppingCart,
+  Upload,
 } from "lucide-react";
 import {
   ConnectivityState,
@@ -69,6 +70,12 @@ import DoctorDashboard from "./components/DoctorDashboard";
 import { processingService } from "./services/processingService";
 import { reminderService } from "./services/reminderService";
 import SymptomHistoryService from "./services/symptomHistoryService";
+import {
+  createMedicalCase,
+  getCasesByPatient,
+  getCaseStatistics,
+  getAllCases,
+} from "./services/medicalCasesService";
 
 const STATE_LANGUAGE_MAP: Record<string, SupportedLanguage> = {
   Telangana: "Telugu",
@@ -323,8 +330,10 @@ const App: React.FC = () => {
   const [whatsappNotify, setWhatsappNotify] = useState<string | null>(null);
   const [backendMessages, setBackendMessages] = useState<any[]>([]);
   const [translations, setTranslations] = useState<Record<string, string>>({});
+  const [imageCaseDoctorReplies, setImageCaseDoctorReplies] = useState<any[]>(
+    []
+  );
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
 
@@ -414,6 +423,54 @@ const App: React.FC = () => {
       }
     } catch (error) {
       console.error("Failed to fetch patient messages:", error);
+    }
+  }, [patientProfile?.patientId]);
+
+  // Function to fetch doctor replies from image cases
+  const fetchImageCaseDoctorReplies = useCallback(() => {
+    if (!patientProfile) return;
+
+    try {
+      // Get all medical cases for this patient
+      const patientCases = getCasesByPatient(patientProfile.patientId);
+
+      // Extract all doctor replies from these cases
+      const allReplies: any[] = [];
+
+      patientCases.forEach((medicalCase) => {
+        medicalCase.replies.forEach((reply) => {
+          // Format the reply to match existing doctor message structure
+          const formattedReply = {
+            id: reply.replyId,
+            type: reply.type,
+            content: reply.content,
+            timestamp: reply.timestamp,
+            doctorName: reply.doctorName,
+            specialization: reply.specialization,
+            caseId: medicalCase.caseId,
+            patientId: medicalCase.patientId,
+            patientName: medicalCase.patientName,
+            images: medicalCase.images,
+            // Add source identification
+            source: "IMAGE_CASE",
+            // Add case context
+            caseContext: {
+              caseId: medicalCase.caseId,
+              status: medicalCase.status,
+              createdAt: medicalCase.createdAt,
+            },
+          };
+          allReplies.push(formattedReply);
+        });
+      });
+
+      setImageCaseDoctorReplies(allReplies);
+      console.log(
+        `📷 Fetched ${allReplies.length} doctor replies from image cases`
+      );
+    } catch (error) {
+      console.error("Failed to fetch image case doctor replies:", error);
+      setImageCaseDoctorReplies([]);
     }
   }, [patientProfile?.patientId]);
 
@@ -515,6 +572,9 @@ const App: React.FC = () => {
 
         // Fetch messages from backend
         fetchPatientMessages();
+
+        // Fetch doctor replies from image cases
+        fetchImageCaseDoctorReplies();
 
         // Initialize medicine reminders for this patient
         reminderService.startReminderChecks(patientProfile.patientId);
@@ -1149,37 +1209,6 @@ const App: React.FC = () => {
     }, 100);
   }, [newSymptom, patientProfile, triggerSync]);
 
-  const handleMediaUpload = async (
-    event: React.ChangeEvent<HTMLInputElement>
-  ) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onloadend = async () => {
-      const base64 = reader.result as string;
-      const record: MedicalRecord = {
-        id: `VIS-${Date.now()}`,
-        type: "VISUAL_TRIAGE",
-        content: `Visual Attachment: ${file.name}`,
-        timestamp: Date.now(),
-        status: "PENDING",
-        media: {
-          type: file.type.startsWith("video") ? "VIDEO_FRAMES" : "IMAGE",
-          lowResData: base64,
-          analysis: "Queued for Specialist Routing",
-        },
-      };
-      setVault((prev) => ({ ...prev, records: [...prev.records, record] }));
-      setWhatsappNotify(`Visual record saved to vault. Syncing to specialist.`);
-      // 🚀 FORCE SYNC IMMEDIATELY
-      console.log("🔥 calling triggerSync after media");
-      triggerSync();
-      setTimeout(() => setWhatsappNotify(null), 3000);
-    };
-    reader.readAsDataURL(file);
-  };
-
   // Calculate unread message count from local records and backend messages
   useEffect(() => {
     if (userRole === "PATIENT" && patientProfile) {
@@ -1193,10 +1222,21 @@ const App: React.FC = () => {
         (msg) => !msg.read
       ).length;
 
+      // Count doctor replies from image cases
+      const imageCaseReplies = imageCaseDoctorReplies.length;
+
       // Total unread count
-      setUnreadMessageCount(doctorRecords.length + unreadBackendMessages);
+      setUnreadMessageCount(
+        doctorRecords.length + unreadBackendMessages + imageCaseReplies
+      );
     }
-  }, [userRole, patientProfile, vault.records, backendMessages]);
+  }, [
+    userRole,
+    patientProfile,
+    vault.records,
+    backendMessages,
+    imageCaseDoctorReplies,
+  ]);
 
   const handleDoctorSubmit = async () => {
     if (!activeCase || (!doctorMedInput.trim() && !doctorNoteInput.trim()))
@@ -2169,24 +2209,25 @@ const App: React.FC = () => {
             {activePatientTab === "symptoms" && (
               <div className="space-y-6">
                 {/* SYMPTOM INGESTION CARD */}
-                <div className="bg-[#6366F1] rounded-[48px] p-10 shadow-2xl text-white relative overflow-hidden group">
+                <div className="bg-gradient-to-br from-emerald-500 to-teal-600 rounded-[48px] p-10 shadow-2xl text-white relative overflow-hidden group">
                   <div className="absolute top-0 right-0 p-8 opacity-10 rotate-12 transition-transform group-hover:rotate-0">
-                    <CloudLightning size={120} />
+                    <Activity size={120} />
                   </div>
-                  <div className="relative z-10 space-y-8 text-center">
-                    <div>
-                      <h3 className="text-xs font-black uppercase tracking-[0.3em] mb-2 opacity-80">
-                        Symptom Ingestion
+                  <div className="relative z-10 space-y-8">
+                    <div className="text-center">
+                      <h3 className="text-sm font-black uppercase tracking-[0.3em] mb-3 text-emerald-100">
+                        Medical Symptom Report
                       </h3>
-                      <p className="text-sm font-medium opacity-90">
-                        System will auto-route your entry to a specialist.
+                      <p className="text-base font-medium text-emerald-50">
+                        Describe your symptoms for specialist evaluation
                       </p>
                     </div>
 
-                    <div className="bg-white/10 backdrop-blur-md rounded-[40px] p-8 border border-white/20 border-dashed min-h-[220px] flex flex-col items-center justify-center space-y-6">
+                    {/* Primary Text Input Section */}
+                    <div className="bg-white/15 backdrop-blur-md rounded-[40px] p-8 border border-white/20 border-dashed">
                       {isTranscribing || isVoiceCapturing ? (
-                        <>
-                          <div className="flex items-center gap-1.5 h-16">
+                        <div className="text-center space-y-6">
+                          <div className="flex items-center justify-center gap-1.5 h-16">
                             {[1, 2, 3, 4, 5, 6].map((i) => (
                               <div
                                 key={i}
@@ -2198,129 +2239,245 @@ const App: React.FC = () => {
                               ></div>
                             ))}
                           </div>
-                          <p className="text-xs font-black uppercase tracking-widest animate-pulse">
+                          <p className="text-sm font-black uppercase tracking-widest animate-pulse">
                             {isTranscribing
                               ? `Processing ${patientProfile?.language} Audio...`
                               : "Listening..."}
                           </p>
-                        </>
+                        </div>
                       ) : isRecordingUI ? (
-                        <div className="w-full space-y-4">
+                        <div className="space-y-4">
+                          <div className="text-center mb-6">
+                            <h4 className="text-lg font-black text-white mb-2">
+                              Describe Your Symptoms
+                            </h4>
+                            <p className="text-sm text-emerald-100">
+                              Please provide detailed information about your
+                              condition
+                            </p>
+                          </div>
                           <textarea
                             value={newSymptom}
                             onChange={(e) => setNewSymptom(e.target.value)}
                             placeholder={`Describe your problem in ${patientProfile?.language}...`}
-                            className="w-full bg-white/20 border border-white/10 rounded-3xl p-6 text-white placeholder:text-white/40 focus:ring-2 focus:ring-white outline-none h-32 text-sm"
+                            className="w-full bg-white/20 border border-white/10 rounded-3xl p-6 text-white placeholder:text-white/40 focus:ring-2 focus:ring-white outline-none h-40 text-base font-medium"
                           />
-                          <button
-                            onClick={() => setIsRecordingUI(false)}
-                            className="text-[10px] font-black uppercase opacity-60 hover:opacity-100"
-                          >
-                            Cancel Text Entry
-                          </button>
+                          <div className="flex gap-3 justify-center">
+                            <button
+                              onClick={() => setIsRecordingUI(false)}
+                              className="bg-white/10 text-white font-black py-3 px-6 rounded-2xl hover:bg-white/20 transition-all"
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              onClick={handleRecordSymptom}
+                              disabled={!newSymptom.trim()}
+                              className="bg-white text-emerald-600 font-black py-3 px-8 rounded-2xl hover:bg-emerald-50 transition-all disabled:opacity-50"
+                            >
+                              Submit Report
+                            </button>
+                          </div>
                         </div>
                       ) : (
-                        <div className="flex flex-col items-center gap-4 text-center">
+                        <div className="space-y-6">
                           {newSymptom ? (
-                            <div className="space-y-4">
-                              <p className="text-lg font-bold">
-                                "{newSymptom}"
-                              </p>
+                            <div className="text-center space-y-4">
+                              <div className="bg-white/20 rounded-3xl p-6">
+                                <p className="text-lg font-bold text-white mb-4">
+                                  "{newSymptom}"
+                                </p>
+                                <button
+                                  onClick={() => setNewSymptom("")}
+                                  className="text-sm font-black uppercase tracking-widest text-emerald-200 hover:text-white"
+                                >
+                                  Clear Entry
+                                </button>
+                              </div>
                               <button
-                                onClick={() => setNewSymptom("")}
-                                className="text-[10px] font-black uppercase tracking-widest opacity-60"
+                                onClick={handleRecordSymptom}
+                                className="w-full bg-white text-emerald-600 font-black py-4 rounded-[32px] uppercase tracking-widest flex items-center justify-center gap-3 transition-all hover:bg-emerald-50 active:scale-95 shadow-xl"
                               >
-                                Clear Entry
+                                <ArrowUpCircle size={20} />
+                                Submit Medical Report
                               </button>
                             </div>
                           ) : (
-                            <>
-                              <div className="flex gap-4">
-                                <button
-                                  onClick={startVoiceRecording}
-                                  className="w-20 h-20 bg-white/10 hover:bg-white/20 rounded-full flex items-center justify-center transition-all border border-white/20 shadow-xl group"
-                                >
-                                  <Mic
-                                    size={32}
-                                    className="group-hover:scale-110 transition-transform"
-                                  />
-                                </button>
-                                <button
-                                  onClick={() => fileInputRef.current?.click()}
-                                  className="w-20 h-20 bg-white/10 hover:bg-white/20 rounded-full flex items-center justify-center transition-all border border-white/20 shadow-xl group"
-                                >
-                                  <Camera
-                                    size={32}
-                                    className="group-hover:scale-110 transition-transform"
-                                  />
-                                </button>
-                                <button
-                                  onClick={() => fileInputRef.current?.click()}
-                                  className="w-20 h-20 bg-white/10 hover:bg-white/20 rounded-full flex items-center justify-center transition-all border border-white/20 shadow-xl group"
-                                >
-                                  <Video
-                                    size={32}
-                                    className="group-hover:scale-110 transition-transform"
-                                  />
-                                </button>
-                                <button
-                                  onClick={() => setIsRecordingUI(true)}
-                                  className="w-20 h-20 bg-white/10 hover:bg-white/20 rounded-full flex items-center justify-center transition-all border border-white/20 shadow-xl group"
-                                >
-                                  <TypeIcon
-                                    size={32}
-                                    className="group-hover:scale-110 transition-transform"
-                                  />
-                                </button>
-                              </div>
-                              <p className="text-[10px] font-black uppercase tracking-[0.2em] opacity-60">
-                                Voice • Photo • Video • Text
-                              </p>
-                            </>
+                            <div className="text-center space-y-6">
+                              <button
+                                onClick={() => setIsRecordingUI(true)}
+                                className="w-full bg-white/20 hover:bg-white/30 border border-white/20 rounded-3xl p-8 transition-all group"
+                              >
+                                <div className="flex flex-col items-center gap-4">
+                                  <div className="w-16 h-16 bg-white/10 rounded-2xl flex items-center justify-center group-hover:scale-110 transition-transform">
+                                    <TypeIcon size={32} />
+                                  </div>
+                                  <div>
+                                    <h4 className="text-xl font-black text-white mb-2">
+                                      Type Your Symptoms
+                                    </h4>
+                                    <p className="text-sm text-emerald-100">
+                                      Primary method for detailed symptom
+                                      description
+                                    </p>
+                                  </div>
+                                </div>
+                              </button>
+                            </div>
                           )}
                         </div>
                       )}
                     </div>
 
-                    <div className="flex flex-col gap-4">
-                      {isVoiceCapturing ? (
+                    {/* Secondary Options */}
+                    {!isRecordingUI && (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {/* Audio Option */}
+                        <div className="bg-white/10 backdrop-blur-md rounded-[24px] p-5 border border-white/20 border-dashed hover:bg-white/15 transition-all">
+                          <div className="text-center space-y-3">
+                            <button
+                              onClick={
+                                isVoiceCapturing
+                                  ? stopVoiceRecording
+                                  : startVoiceRecording
+                              }
+                              className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all mx-auto ${
+                                isVoiceCapturing
+                                  ? "bg-red-500 animate-pulse"
+                                  : "bg-white/20 hover:bg-white/30"
+                              }`}
+                            >
+                              <Mic size={24} className="text-white" />
+                            </button>
+                            <div>
+                              <h4 className="text-sm font-black text-white mb-1">
+                                Voice Note (Optional)
+                              </h4>
+                              <p className="text-xs text-emerald-100">
+                                Record audio description
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Upload Medical Image Option - Network-Aware */}
+                        <div className="bg-white/10 backdrop-blur-md rounded-[24px] p-5 border border-white/20 border-dashed hover:bg-white/15 transition-all">
+                          <div className="text-center space-y-3">
+                            <button
+                              onClick={() => {
+                                // Network-aware upload validation
+                                if (network === ConnectivityState.OFFLINE) {
+                                  alert(
+                                    "Image upload requires network connectivity"
+                                  );
+                                  return;
+                                }
+
+                                const fileInput =
+                                  document.createElement("input");
+                                fileInput.type = "file";
+                                fileInput.accept = "image/*";
+                                fileInput.onchange = async (e) => {
+                                  const file = (e.target as HTMLInputElement)
+                                    .files?.[0];
+                                  if (!file) return;
+
+                                  if (file.size > 5 * 1024 * 1024) {
+                                    alert("File too large (max 5MB)");
+                                    return;
+                                  }
+
+                                  if (!patientProfile) {
+                                    alert("Patient profile not found");
+                                    return;
+                                  }
+
+                                  try {
+                                    // Convert file to base64
+                                    const reader = new FileReader();
+                                    reader.onload = async (event) => {
+                                      const base64 = (
+                                        event.target?.result as string
+                                      )?.split(",")[1];
+                                      if (base64) {
+                                        // Use medicalCasesService for proper integration
+                                        const medicalCase = createMedicalCase(
+                                          patientProfile.patientId,
+                                          patientProfile.name,
+                                          patientProfile.age,
+                                          patientProfile.phoneNumber || "",
+                                          patientProfile.district || "",
+                                          patientProfile.state || "",
+                                          base64,
+                                          file.name
+                                        );
+
+                                        console.log(
+                                          "✅ Medical case created:",
+                                          medicalCase.caseId
+                                        );
+                                        alert(
+                                          `✅ Image uploaded successfully! Case ID: ${medicalCase.caseId.substring(
+                                            0,
+                                            20
+                                          )}...`
+                                        );
+                                      }
+                                    };
+                                    reader.readAsDataURL(file);
+                                  } catch (error) {
+                                    console.error(
+                                      "❌ Image upload failed:",
+                                      error
+                                    );
+                                    alert(
+                                      "❌ Image upload failed. Please try again."
+                                    );
+                                  }
+                                };
+                                fileInput.click();
+                              }}
+                              disabled={network === ConnectivityState.OFFLINE}
+                              className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all mx-auto ${
+                                network === ConnectivityState.OFFLINE
+                                  ? "bg-gray-400 cursor-not-allowed opacity-50"
+                                  : "bg-white/20 hover:bg-white/30"
+                              }`}
+                            >
+                              <Camera size={24} className="text-white" />
+                            </button>
+                            <div>
+                              <h4 className="text-sm font-black text-white mb-1">
+                                Upload Medical Image
+                              </h4>
+                              <p className="text-xs text-emerald-100">
+                                Add photos for visual diagnosis
+                              </p>
+                            </div>
+                            <div className="text-[10px] text-emerald-200 mt-2">
+                              Supported: JPEG, PNG • Max: 5MB
+                            </div>
+                            {network === ConnectivityState.OFFLINE && (
+                              <div className="text-[10px] text-red-300 mt-2 bg-red-500/20 px-2 py-1 rounded-full">
+                                Network required for upload
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Main CTA Button */}
+                    {!isRecordingUI && !newSymptom && (
+                      <div className="text-center">
                         <button
-                          onClick={stopVoiceRecording}
-                          className="w-full bg-red-500 text-white font-black py-5 rounded-[32px] uppercase tracking-widest flex items-center justify-center gap-3 transition-all animate-pulse shadow-xl"
+                          onClick={() => setIsRecordingUI(true)}
+                          className="w-full bg-white text-emerald-600 font-black py-6 rounded-[32px] uppercase tracking-widest flex items-center justify-center gap-3 transition-all hover:bg-emerald-50 active:scale-95 shadow-2xl hover:shadow-white/20"
                         >
-                          <Square size={20} className="fill-current" /> Stop and
-                          Process
+                          <ArrowUpCircle size={24} />
+                          Start Medical Triage Loop
                         </button>
-                      ) : (
-                        <button
-                          onClick={
-                            newSymptom
-                              ? handleRecordSymptom
-                              : startVoiceRecording
-                          }
-                          disabled={isTranscribing}
-                          className="w-full bg-white text-indigo-600 font-black py-5 rounded-[32px] uppercase tracking-widest flex items-center justify-center gap-3 transition-all hover:bg-slate-50 active:scale-95 shadow-xl disabled:opacity-50"
-                        >
-                          {isTranscribing ? (
-                            <Loader2 className="animate-spin" />
-                          ) : (
-                            <ArrowUpCircle size={20} />
-                          )}
-                          {isTranscribing
-                            ? "Analyzing..."
-                            : newSymptom
-                            ? "Submit to Medical Loop"
-                            : "Start Medical Triage Loop"}
-                        </button>
-                      )}
-                    </div>
-                    <input
-                      type="file"
-                      ref={fileInputRef}
-                      onChange={handleMediaUpload}
-                      accept="image/*,video/*"
-                      className="hidden"
-                    />
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -2548,15 +2705,22 @@ const App: React.FC = () => {
                       )}
                     </select>
                     <button
-                      onClick={fetchPatientMessages}
+                      onClick={() => {
+                        fetchPatientMessages();
+                        fetchImageCaseDoctorReplies();
+                      }}
                       className="text-[9px] font-bold text-blue-600 bg-blue-50 px-3 py-2 rounded-full uppercase tracking-wider border border-blue-100 hover:bg-blue-100 transition-colors flex items-center gap-1"
                     >
                       <RefreshCw size={12} />
                       Refresh
                     </button>
                     <div className="text-[9px] font-bold text-emerald-600 bg-emerald-50 px-4 py-2 rounded-full uppercase tracking-wider border border-emerald-100">
-                      {backendMessages.length > 0
-                        ? `${backendMessages.length} Backend`
+                      {backendMessages.length + imageCaseDoctorReplies.length >
+                      0
+                        ? `${
+                            backendMessages.length +
+                            imageCaseDoctorReplies.length
+                          } Total`
                         : "Local Records"}
                     </div>
                   </div>
@@ -2638,6 +2802,128 @@ const App: React.FC = () => {
                   </div>
                 )}
 
+                {/* Doctor Replies from Image Cases */}
+                {imageCaseDoctorReplies.length > 0 && (
+                  <div className="space-y-4">
+                    {imageCaseDoctorReplies
+                      .slice()
+                      .reverse()
+                      .map((reply) => (
+                        <div
+                          key={reply.id}
+                          className="bg-white rounded-[40px] p-8 border border-purple-100 shadow-sm transition-all hover:shadow-md hover:border-purple-200 group"
+                        >
+                          <div className="flex items-start gap-6">
+                            <div className="bg-purple-50 text-purple-600 group-hover:bg-purple-600 group-hover:text-white p-4 rounded-3xl transition-colors">
+                              {reply.type === "PRESCRIPTION" ? (
+                                <ShieldCheck size={28} />
+                              ) : (
+                                <MessageCircle size={28} />
+                              )}
+                            </div>
+                            <div className="flex-1">
+                              <div className="flex justify-between items-center mb-3">
+                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                                  {new Date(
+                                    reply.timestamp
+                                  ).toLocaleDateString()}{" "}
+                                  •{" "}
+                                  {new Date(reply.timestamp).toLocaleTimeString(
+                                    [],
+                                    {
+                                      hour: "2-digit",
+                                      minute: "2-digit",
+                                    }
+                                  )}
+                                </span>
+                                <div className="flex items-center gap-1.5 bg-purple-50 text-purple-700 text-[9px] font-black px-3 py-1 rounded-full uppercase">
+                                  <Camera size={10} /> Image Case Reply
+                                </div>
+                              </div>
+
+                              {/* Image Case Context */}
+                              <div className="bg-purple-50 p-4 rounded-2xl mb-4 border border-purple-100">
+                                <div className="flex items-center gap-2 mb-2">
+                                  <Camera
+                                    size={14}
+                                    className="text-purple-600"
+                                  />
+                                  <span className="text-[10px] font-black text-purple-700 uppercase tracking-widest">
+                                    Case Context
+                                  </span>
+                                </div>
+                                <div className="text-sm">
+                                  <p className="font-bold text-purple-800">
+                                    Case ID: {reply.caseId.substring(0, 20)}...
+                                  </p>
+                                  <p className="text-[10px] text-purple-600 uppercase tracking-wider">
+                                    Status: {reply.caseContext.status}
+                                  </p>
+                                  <p className="text-[10px] text-purple-600">
+                                    Images: {reply.images?.length || 0} uploaded
+                                  </p>
+                                </div>
+                              </div>
+
+                              {/* Doctor Information */}
+                              <div className="bg-emerald-50 p-4 rounded-2xl mb-4 border border-emerald-100">
+                                <div className="flex items-center gap-2 mb-2">
+                                  <Stethoscope
+                                    size={14}
+                                    className="text-emerald-600"
+                                  />
+                                  <span className="text-[10px] font-black text-emerald-700 uppercase tracking-widest">
+                                    Doctor Details
+                                  </span>
+                                </div>
+                                <div className="text-sm">
+                                  <p className="font-bold text-emerald-800">
+                                    {reply.doctorName || "Doctor"}
+                                  </p>
+                                  <p className="text-[10px] text-emerald-600 uppercase tracking-wider">
+                                    {reply.specialization || "General Medicine"}
+                                  </p>
+                                </div>
+                              </div>
+
+                              {(() => {
+                                const display = getDisplayText(
+                                  `image-case-${reply.id}`,
+                                  reply.content
+                                );
+                                return (
+                                  <>
+                                    <p className="text-slate-900 font-bold text-lg mb-1 leading-snug">
+                                      {display.primary}
+                                    </p>
+                                    {display.secondary && (
+                                      <p className="text-[11px] text-slate-500 font-semibold">
+                                        {display.secondary}
+                                      </p>
+                                    )}
+                                  </>
+                                );
+                              })()}
+                              <button
+                                onClick={() =>
+                                  playVoiceBack(reply.id, reply.content || "")
+                                }
+                                className="flex items-center gap-3 text-xs font-black uppercase text-purple-600 bg-purple-50 px-6 py-3 rounded-2xl transition-all hover:bg-purple-100 active:scale-95"
+                              >
+                                {isPlaying === reply.id ? (
+                                  <Loader2 className="animate-spin" size={16} />
+                                ) : (
+                                  <Volume2 size={16} />
+                                )}
+                                Play Doctor's Instructions
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                )}
+
                 {/* Doctor Messages from Local Vault */}
                 {(() => {
                   const doctorRecords = vault.records.filter(
@@ -2646,7 +2932,10 @@ const App: React.FC = () => {
                       record.type === "DOCTOR_NOTE"
                   );
 
-                  if (doctorRecords.length === 0) {
+                  if (
+                    doctorRecords.length === 0 &&
+                    imageCaseDoctorReplies.length === 0
+                  ) {
                     return (
                       <div className="text-center py-16 bg-white rounded-[40px] border border-slate-100 shadow-sm">
                         <MessageCircle
@@ -3302,20 +3591,7 @@ const App: React.FC = () => {
 
         {/* PATIENT / DOCTOR QUICK INTEGRATION */}
         {userRole === "PATIENT" && patientProfile && (
-          <div className="space-y-6">
-            <PatientImageUpload
-              patientId={patientProfile.patientId}
-              patientName={patientProfile.name}
-              patientAge={patientProfile.age}
-              patientPhone={patientProfile.phoneNumber}
-              patientDistrict={patientProfile.district}
-              patientState={patientProfile.state}
-              onCaseCreated={(c) => {
-                console.log("App: patient case created", c.caseId);
-                // optional: refresh any patient-specific UI here
-              }}
-            />
-          </div>
+          <div className="space-y-6"></div>
         )}
 
         {userRole === "DOCTOR" && doctorProfile && (
