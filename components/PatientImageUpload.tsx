@@ -1,5 +1,5 @@
-import React, { useRef, useState } from 'react';
-import { Camera, Upload, Loader2, AlertCircle } from 'lucide-react';
+import React, { useRef, useState, useEffect } from 'react';
+import { Camera, Upload, Loader2, AlertCircle, RefreshCw } from 'lucide-react';
 import {
   createMedicalCase,
   getCasesByPatient,
@@ -48,6 +48,19 @@ export const PatientImageUpload: React.FC<PatientImageUploadProps> = ({
   const [myCases, setMyCases] = useState<MedicalCase[]>(() =>
     getCasesByPatient(patientId)
   );
+
+  // 🔄 Auto-refresh cases every 3 seconds to see doctor replies
+  useEffect(() => {
+    const refreshCases = () => {
+      const updatedCases = getCasesByPatient(patientId);
+      setMyCases(updatedCases);
+      console.log('🔄 Patient cases refreshed, found', updatedCases.length, 'cases');
+    };
+
+    refreshCases(); // Initial load
+    const interval = setInterval(refreshCases, 3000); // Refresh every 3 seconds
+    return () => clearInterval(interval);
+  }, [patientId]);
 
   const handleImageUpload = async (
     event: React.ChangeEvent<HTMLInputElement>
@@ -252,16 +265,42 @@ export const PatientImageUpload: React.FC<PatientImageUploadProps> = ({
                       ))}
                     </div>
 
-                    {/* Timestamps */}
-                    <div className="text-xs font-medium text-slate-500 space-y-1">
+                    {/* Timestamps & Doctor Replies */}
+                    <div className="text-xs font-medium text-slate-500 space-y-2">
                       <p>
                         📅 Created:{' '}
                         {new Date(medicalCase.createdAt).toLocaleString()}
                       </p>
                       {medicalCase.replies.length > 0 && (
-                        <p className="text-emerald-600 font-bold">
-                          ✅ Doctor replied ({medicalCase.replies.length})
-                        </p>
+                        <div className="mt-3 pt-3 border-t border-slate-200 space-y-2">
+                          <p className="text-emerald-600 font-bold">
+                            ✅ Doctor replied ({medicalCase.replies.length})
+                          </p>
+                          {medicalCase.replies.map((reply) => (
+                            <div
+                              key={reply.replyId}
+                              className="bg-emerald-50 rounded-xl p-3 border border-emerald-100"
+                            >
+                              <p className="text-xs font-bold text-emerald-700">
+                                Dr. {reply.doctorName} ({reply.specialization})
+                              </p>
+                              <p className="text-xs font-medium text-emerald-600 mt-1">
+                                {reply.type === 'PRESCRIPTION' ? '💊 Prescription' : '📋 Note'}
+                              </p>
+                              <p className="text-xs text-emerald-800 mt-1">
+                                {reply.content}
+                              </p>
+                              {reply.medication && (
+                                <p className="text-xs font-bold text-emerald-700 mt-1">
+                                  💉 {reply.medication}
+                                </p>
+                              )}
+                              <p className="text-[10px] text-emerald-500 mt-1">
+                                {new Date(reply.timestamp).toLocaleString()}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
                       )}
                     </div>
                   </div>
