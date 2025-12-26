@@ -210,8 +210,6 @@ app.get("/api/get-unread-count", async (req, res) => {
  * Low-bandwidth delta-sync model for doctors
  */
 
-// WARNING: In-memory storage is volatile and will be lost on server restart.
-// For production, replace with a persistent database (e.g., Redis, MongoDB, or a SQL database).
 const syncPacketStore = new Map();
 
 /**
@@ -275,7 +273,7 @@ app.post("/api/delta-sync", async (req, res) => {
   try {
     const { vault, newSymptoms, currentSymptoms } = req.body;
 
-    // 🔐 Safety check
+    // Safety check
     if (!vault || !newSymptoms) {
       return res.status(400).json({
         error: "Missing vault or symptoms data",

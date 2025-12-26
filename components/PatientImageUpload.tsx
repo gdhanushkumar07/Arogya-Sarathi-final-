@@ -21,17 +21,6 @@ interface PatientImageUploadProps {
   patientState: string;
   onCaseCreated?: (medicalCase: MedicalCase) => void;
 }
-
-/**
- * PATIENT IMAGE UPLOAD COMPONENT
- *
- * This component handles the patient uploading medical images
- * It properly converts File → Base64 → localStorage
- *
- * Root cause fix:
- * - ❌ OLD: Store File objects directly (not JSON-serializable)
- * - ✅ NEW: Convert to Base64 string, save to medicalCases key
- */
 export const PatientImageUpload: React.FC<PatientImageUploadProps> = ({
   patientId,
   patientName,
@@ -64,13 +53,13 @@ export const PatientImageUpload: React.FC<PatientImageUploadProps> = ({
     };
   }, []);
 
-  // 🔄 Auto-refresh cases every 3 seconds to see doctor replies
+  // Auto-refresh cases every 3 seconds to see doctor replies
   useEffect(() => {
     const refreshCases = () => {
       const updatedCases = getCasesByPatient(patientId);
       setMyCases(updatedCases);
       console.log(
-        "🔄 Patient cases refreshed, found",
+        "Patient cases refreshed, found",
         updatedCases.length,
         "cases"
       );
@@ -90,7 +79,7 @@ export const PatientImageUpload: React.FC<PatientImageUploadProps> = ({
     // Check network status before allowing upload
     if (!isOnline) {
       setError(
-        "❌ No internet connection. Please check your network and try again."
+        "No internet connection. Please check your network and try again."
       );
       return;
     }
@@ -100,21 +89,21 @@ export const PatientImageUpload: React.FC<PatientImageUploadProps> = ({
     setUploading(true);
 
     try {
-      // ✅ Step 1: Validate file size
+      // Step 1: Validate file size
       if (!validateFileSize(file, 5)) {
         throw new Error("File too large (max 5MB)");
       }
 
-      // ✅ Step 2: Convert File to Base64
-      console.log("🔄 Converting image to Base64...");
+      // Step 2: Convert File to Base64
+      console.log("Converting image to Base64...");
       const base64 = await fileToBase64(file);
 
-      // ✅ Step 3: Create thumbnail to save localStorage space
-      console.log("🎨 Creating thumbnail...");
+      // Step 3: Create thumbnail to save localStorage space
+      console.log("Creating thumbnail...");
       const thumbnail = await createImageThumbnail(base64, 640, 480);
 
-      // ✅ Step 4: Create medical case with Base64 image
-      console.log("💾 Saving to localStorage...");
+      // Step 4: Create medical case with Base64 image
+      console.log("Saving to localStorage...");
       const medicalCase = createMedicalCase(
         patientId,
         patientName,
@@ -134,18 +123,18 @@ export const PatientImageUpload: React.FC<PatientImageUploadProps> = ({
       onCaseCreated?.(medicalCase);
 
       setSuccess(
-        `✅ Image uploaded! Case ID: ${medicalCase.caseId.substring(0, 20)}...`
+        `Image uploaded! Case ID: ${medicalCase.caseId.substring(0, 20)}...`
       );
-      console.log("✅ Medical case created:", medicalCase);
+      console.log("Medical case created:", medicalCase);
 
       // Check storage usage
       const space = getAvailableStorageSpace();
       console.log(
-        `📊 Storage: ${space.usedMB}MB used, ${space.remainingMB}MB remaining`
+        `Storage: ${space.usedMB}MB used, ${space.remainingMB}MB remaining`
       );
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
-      setError(`❌ Upload failed: ${errorMessage}`);
+      setError(`Upload failed: ${errorMessage}`);
       console.error("Upload error:", err);
     } finally {
       setUploading(false);
@@ -162,7 +151,7 @@ export const PatientImageUpload: React.FC<PatientImageUploadProps> = ({
         <div className="space-y-6">
           <div>
             <h3 className="text-lg font-black text-slate-900 mb-2">
-              📸 Upload Medical Image
+              Upload Medical Image
             </h3>
             <p className="text-sm font-medium text-slate-600">
               Patient can upload images. Doctor will see them and reply.
@@ -201,8 +190,8 @@ export const PatientImageUpload: React.FC<PatientImageUploadProps> = ({
                 }`}
               >
                 {isOnline
-                  ? "✅ Online - Image upload available"
-                  : "❌ Offline - Image upload disabled"}
+                  ? "Online - Image upload available"
+                  : "Offline - Image upload disabled"}
               </span>
             </div>
             <button
@@ -253,9 +242,9 @@ export const PatientImageUpload: React.FC<PatientImageUploadProps> = ({
           />
 
           <div className="text-xs font-medium text-slate-500 space-y-1">
-            <p>✅ Supported: JPEG, PNG, WebP</p>
-            <p>📏 Max size: 5MB (will be compressed)</p>
-            <p>💾 Saved to localStorage with case ID</p>
+            <p>Supported: JPEG, PNG, WebP</p>
+            <p>Max size: 5MB (will be compressed)</p>
+            <p>Saved to localStorage with case ID</p>
           </div>
         </div>
       </div>
@@ -336,7 +325,7 @@ export const PatientImageUpload: React.FC<PatientImageUploadProps> = ({
                       {medicalCase.replies.length > 0 && (
                         <div className="mt-3 pt-3 border-t border-slate-200 space-y-2">
                           <p className="text-emerald-600 font-bold">
-                            ✅ Doctor replied ({medicalCase.replies.length})
+                            Doctor replied ({medicalCase.replies.length})
                           </p>
                           {medicalCase.replies.map((reply) => (
                             <div
@@ -348,15 +337,15 @@ export const PatientImageUpload: React.FC<PatientImageUploadProps> = ({
                               </p>
                               <p className="text-xs font-medium text-emerald-600 mt-1">
                                 {reply.type === "PRESCRIPTION"
-                                  ? "💊 Prescription"
-                                  : "📋 Note"}
+                                  ? "Prescription"
+                                  : "Note"}
                               </p>
                               <p className="text-xs text-emerald-800 mt-1">
                                 {reply.content}
                               </p>
                               {reply.medication && (
                                 <p className="text-xs font-bold text-emerald-700 mt-1">
-                                  💉 {reply.medication}
+                                  {reply.medication}
                                 </p>
                               )}
                               <p className="text-[10px] text-emerald-500 mt-1">
@@ -378,35 +367,3 @@ export const PatientImageUpload: React.FC<PatientImageUploadProps> = ({
 };
 
 export default PatientImageUpload;
-
-/**
- * USAGE IN PATIENT COMPONENT:
- * ===========================
- *
- * <PatientImageUpload
- *   patientId={patientProfile.patientId}
- *   patientName={patientProfile.name}
- *   patientAge={patientProfile.age}
- *   patientPhone={patientProfile.phoneNumber}
- *   patientDistrict={patientProfile.district}
- *   patientState={patientProfile.state}
- *   onCaseCreated={(medicalCase) => {
- *     console.log('Case created:', medicalCase);
- *   }}
- * />
- *
- * WHY THIS WORKS:
- * ===============
- * 1. File input captures the File object
- * 2. fileToBase64() converts it to a data URL string
- * 3. createImageThumbnail() compresses it for localStorage
- * 4. createMedicalCase() saves to localStorage under 'medicalCases' key
- * 5. ✅ Doctor can access same 'medicalCases' key and see the image
- *
- * WHAT WAS WRONG BEFORE:
- * ======================
- * - Images stored in patient-specific keys (hv_vault_PAT-xxx)
- * - File objects stored directly (not JSON-serializable)
- * - Doctor looked in different keys (hv_vault_DOC-xxx)
- * - Each role had isolated storage
- */

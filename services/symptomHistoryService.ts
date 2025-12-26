@@ -1,27 +1,3 @@
-/**
- * Symptom History Service
- *
- * PURPOSE:
- * ========
- * Store symptoms on the patient's local device AND sync them with the backend.
- * This ensures patients can see their symptom history even after:
- * - Page refresh
- * - Browser restart
- * - Switching patients
- *
- * PROBLEM FIXED:
- * ==============
- * Previously, symptoms were only stored in vault.records (in-memory state)
- * and marked as SYNCED after sending to backend. When page reloaded,
- * vault.records would be empty again since the backend didn't send them back.
- *
- * SOLUTION:
- * =========
- * 1. Store symptoms in localStorage under patient-specific key
- * 2. Keep a persistent record of all symptom submissions
- * 3. Include symptom history in patient vault restoration
- */
-
 export interface PatientSymptom {
   id: string;
   patientId: string;
@@ -65,7 +41,7 @@ export class SymptomHistoryService {
     const key = this.getSymptomKey(patientId);
     localStorage.setItem(key, JSON.stringify(updated));
 
-    console.log(`✅ Symptom stored for patient ${patientId}:`, {
+    console.log(`Symptom stored for patient ${patientId}:`, {
       id: symptom.id,
       content: symptom.content,
       severity: symptom.severity,
@@ -83,13 +59,13 @@ export class SymptomHistoryService {
       const stored = localStorage.getItem(key);
 
       if (!stored) {
-        console.log(`📭 No symptom history found for patient ${patientId}`);
+        console.log(`No symptom history found for patient ${patientId}`);
         return [];
       }
 
       const symptoms = JSON.parse(stored) as PatientSymptom[];
       console.log(
-        `📋 Retrieved ${symptoms.length} symptoms for patient ${patientId}`
+        `Retrieved ${symptoms.length} symptoms for patient ${patientId}`
       );
       return symptoms;
     } catch (error) {
@@ -114,7 +90,7 @@ export class SymptomHistoryService {
     localStorage.setItem(key, JSON.stringify(updated));
 
     console.log(
-      `✅ Marked ${symptomIds.length} symptoms as synced for patient ${patientId}`
+      `Marked ${symptomIds.length} symptoms as synced for patient ${patientId}`
     );
   }
 
@@ -132,7 +108,7 @@ export class SymptomHistoryService {
   static clearHistory(patientId: string): void {
     const key = this.getSymptomKey(patientId);
     localStorage.removeItem(key);
-    console.log(`🗑️ Cleared symptom history for patient ${patientId}`);
+    console.log(`Cleared symptom history for patient ${patientId}`);
   }
 
   /**

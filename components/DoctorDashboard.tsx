@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from "react";
 import {
   ChevronLeft,
   MessageCircle,
@@ -6,14 +6,14 @@ import {
   Send,
   Eye,
   Loader2,
-} from 'lucide-react';
+} from "lucide-react";
 import {
   getAllCases,
   getCaseById,
   addDoctorReply,
   MedicalCase,
-} from '../services/medicalCasesService';
-import { getImageUrl } from '../utils/imageConverterFixed';
+} from "../services/medicalCasesService";
+import { getImageUrl } from "../utils/imageConverterFixed";
 
 interface DoctorDashboardProps {
   doctorId: string;
@@ -24,17 +24,17 @@ interface DoctorDashboardProps {
 
 /**
  * DOCTOR DASHBOARD COMPONENT
- * 
+ *
  * This component allows doctors to:
  * 1. See all medical cases (from shared localStorage key)
  * 2. View images uploaded by patients (stored as Base64)
  * 3. Send replies (prescriptions or notes)
  * 4. Replies are saved to same case object
- * 
+ *
  * Root cause fix:
- * - ✅ Uses 'medicalCases' shared key (not patient-specific)
- * - ✅ Can see Base64 images stored by patient
- * - ✅ Replies update same case, patient sees them
+ * - Uses 'medicalCases' shared key (not patient-specific)
+ * - Can see Base64 images stored by patient
+ * - Replies update same case, patient sees them
  */
 export const DoctorDashboard: React.FC<DoctorDashboardProps> = ({
   doctorId,
@@ -45,11 +45,11 @@ export const DoctorDashboard: React.FC<DoctorDashboardProps> = ({
   const [allCases, setAllCases] = useState<MedicalCase[]>([]);
   const [selectedCase, setSelectedCase] = useState<MedicalCase | null>(null);
   const [loading, setLoading] = useState(false);
-  const [replyContent, setReplyContent] = useState('');
-  const [replyType, setReplyType] = useState<'PRESCRIPTION' | 'DOCTOR_NOTE'>(
-    'DOCTOR_NOTE'
+  const [replyContent, setReplyContent] = useState("");
+  const [replyType, setReplyType] = useState<"PRESCRIPTION" | "DOCTOR_NOTE">(
+    "DOCTOR_NOTE"
   );
-  const [medication, setMedication] = useState('');
+  const [medication, setMedication] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
@@ -63,7 +63,7 @@ export const DoctorDashboard: React.FC<DoctorDashboardProps> = ({
   }, []);
 
   const refreshCases = () => {
-    console.log('🔄 Refreshing cases...');
+    console.log("Refreshing cases...");
     const cases = getAllCases();
     setAllCases(cases);
 
@@ -78,26 +78,29 @@ export const DoctorDashboard: React.FC<DoctorDashboardProps> = ({
 
   const handleSelectCase = (medicalCase: MedicalCase) => {
     setSelectedCase(medicalCase);
-    setReplyContent('');
-    setMedication('');
+    setReplyContent("");
+    setMedication("");
     setSuccessMessage(null);
   };
 
   const handleSendReply = async () => {
-    if (!selectedCase || (!replyContent.trim() && replyType === 'DOCTOR_NOTE')) {
-      alert('Please enter a message');
+    if (
+      !selectedCase ||
+      (!replyContent.trim() && replyType === "DOCTOR_NOTE")
+    ) {
+      alert("Please enter a message");
       return;
     }
 
-    if (replyType === 'PRESCRIPTION' && !medication.trim()) {
-      alert('Please enter medication details');
+    if (replyType === "PRESCRIPTION" && !medication.trim()) {
+      alert("Please enter medication details");
       return;
     }
 
     setSubmitting(true);
 
     try {
-      // ✅ Add reply to the case in localStorage
+      // Add reply to the case in localStorage
       const updatedCase = addDoctorReply(
         selectedCase.caseId,
         doctorId,
@@ -111,9 +114,9 @@ export const DoctorDashboard: React.FC<DoctorDashboardProps> = ({
       if (updatedCase) {
         // Update local state
         setSelectedCase(updatedCase);
-        setReplyContent('');
-        setMedication('');
-        setSuccessMessage(`✅ ${replyType} sent to patient!`);
+        setReplyContent("");
+        setMedication("");
+        setSuccessMessage(`${replyType} sent to patient!`);
 
         // Refresh cases list
         refreshCases();
@@ -122,8 +125,8 @@ export const DoctorDashboard: React.FC<DoctorDashboardProps> = ({
         setTimeout(() => setSuccessMessage(null), 3000);
       }
     } catch (error) {
-      console.error('Error sending reply:', error);
-      alert('Failed to send reply');
+      console.error("Error sending reply:", error);
+      alert("Failed to send reply");
     } finally {
       setSubmitting(false);
     }
@@ -136,7 +139,7 @@ export const DoctorDashboard: React.FC<DoctorDashboardProps> = ({
         <div className="space-y-4">
           <div className="flex items-center justify-between px-2">
             <h2 className="text-2xl font-black text-slate-900">
-              📋 Medical Cases Queue
+              Medical Cases Queue
             </h2>
             <button
               onClick={refreshCases}
@@ -148,20 +151,23 @@ export const DoctorDashboard: React.FC<DoctorDashboardProps> = ({
 
           <div className="text-xs font-bold text-slate-500 px-2 space-y-1">
             <p>
-              👨‍⚕️ Doctor: <span className="text-slate-700">{doctorName}</span>
+              Doctor: <span className="text-slate-700">{doctorName}</span>
             </p>
             <p>
-              🏥 Specialty:{' '}
+              Specialty:{" "}
               <span className="text-slate-700">{specialization}</span>
             </p>
             <p>
-              🏢 Clinic ID: <span className="text-slate-700">{clinicId}</span>
+              Clinic ID: <span className="text-slate-700">{clinicId}</span>
             </p>
           </div>
 
           {allCases.length === 0 ? (
             <div className="bg-slate-50 border border-slate-100 rounded-[32px] p-8 text-center">
-              <MessageCircle size={32} className="mx-auto text-slate-300 mb-3" />
+              <MessageCircle
+                size={32}
+                className="mx-auto text-slate-300 mb-3"
+              />
               <p className="text-sm font-bold text-slate-500">
                 No medical cases yet. Waiting for patient uploads...
               </p>
@@ -185,17 +191,18 @@ export const DoctorDashboard: React.FC<DoctorDashboardProps> = ({
                             Patient: {medicalCase.patientName}
                           </p>
                           <p className="text-xs font-bold text-slate-500">
-                            {medicalCase.patientAge}y • {medicalCase.patientDistrict},
+                            {medicalCase.patientAge}y •{" "}
+                            {medicalCase.patientDistrict},
                             {medicalCase.patientState}
                           </p>
                         </div>
                         <span
                           className={`text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-wider whitespace-nowrap ml-2 ${
-                            medicalCase.status === 'PENDING'
-                              ? 'bg-yellow-100 text-yellow-700'
-                              : medicalCase.status === 'REVIEWED'
-                              ? 'bg-blue-100 text-blue-700'
-                              : 'bg-emerald-100 text-emerald-700'
+                            medicalCase.status === "PENDING"
+                              ? "bg-yellow-100 text-yellow-700"
+                              : medicalCase.status === "REVIEWED"
+                              ? "bg-blue-100 text-blue-700"
+                              : "bg-emerald-100 text-emerald-700"
                           }`}
                         >
                           {medicalCase.status}
@@ -206,8 +213,8 @@ export const DoctorDashboard: React.FC<DoctorDashboardProps> = ({
                       {medicalCase.images.length > 0 && (
                         <div>
                           <p className="text-xs font-bold text-slate-500 mb-2">
-                            📸 {medicalCase.images.length} image
-                            {medicalCase.images.length !== 1 ? 's' : ''}
+                            {medicalCase.images.length} image
+                            {medicalCase.images.length !== 1 ? "s" : ""}
                           </p>
                           <div className="grid grid-cols-2 gap-2">
                             {medicalCase.images.slice(0, 2).map((image) => (
@@ -230,8 +237,8 @@ export const DoctorDashboard: React.FC<DoctorDashboardProps> = ({
                       {medicalCase.replies.length > 0 && (
                         <div className="bg-emerald-50 rounded-xl p-3 border border-emerald-100">
                           <p className="text-xs font-bold text-emerald-700">
-                            ✅ {medicalCase.replies.length} reply
-                            {medicalCase.replies.length !== 1 ? 'ies' : ''}
+                            {medicalCase.replies.length} reply
+                            {medicalCase.replies.length !== 1 ? "ies" : ""}
                           </p>
                         </div>
                       )}
@@ -254,8 +261,8 @@ export const DoctorDashboard: React.FC<DoctorDashboardProps> = ({
           <button
             onClick={() => {
               setSelectedCase(null);
-              setReplyContent('');
-              setMedication('');
+              setReplyContent("");
+              setMedication("");
             }}
             className="flex items-center gap-2 text-slate-600 font-black uppercase text-xs hover:text-slate-900 transition-colors"
           >
@@ -276,21 +283,21 @@ export const DoctorDashboard: React.FC<DoctorDashboardProps> = ({
                     {selectedCase.patientName}
                   </h3>
                   <div className="text-sm font-bold text-slate-600 mt-2 space-y-1">
-                    <p>📱 {selectedCase.patientPhone}</p>
+                    <p>{selectedCase.patientPhone}</p>
                     <p>
-                      📍 {selectedCase.patientDistrict},{' '}
+                      {selectedCase.patientDistrict},{" "}
                       {selectedCase.patientState}
                     </p>
-                    <p>🎂 Age: {selectedCase.patientAge} years</p>
+                    <p>Age: {selectedCase.patientAge} years</p>
                   </div>
                 </div>
                 <span
                   className={`text-[10px] font-black px-4 py-2 rounded-full uppercase tracking-wider ${
-                    selectedCase.status === 'PENDING'
-                      ? 'bg-yellow-100 text-yellow-700'
-                      : selectedCase.status === 'REVIEWED'
-                      ? 'bg-blue-100 text-blue-700'
-                      : 'bg-emerald-100 text-emerald-700'
+                    selectedCase.status === "PENDING"
+                      ? "bg-yellow-100 text-yellow-700"
+                      : selectedCase.status === "REVIEWED"
+                      ? "bg-blue-100 text-blue-700"
+                      : "bg-emerald-100 text-emerald-700"
                   }`}
                 >
                   {selectedCase.status}
@@ -313,26 +320,20 @@ export const DoctorDashboard: React.FC<DoctorDashboardProps> = ({
           {selectedCase.images.length > 0 && (
             <div className="bg-white rounded-[40px] p-10 border border-slate-100 shadow-sm">
               <h3 className="text-lg font-black text-slate-900 mb-6">
-                📸 Medical Images ({selectedCase.images.length})
+                Medical Images ({selectedCase.images.length})
               </h3>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {selectedCase.images.map((image) => (
-                  <div
-                    key={image.imageId}
-                    className="space-y-3"
-                  >
+                  <div key={image.imageId} className="space-y-3">
                     <img
                       src={getImageUrl(image.base64Data)}
                       alt={image.filename}
                       className="w-full rounded-2xl border border-slate-200 object-cover max-h-96"
                     />
                     <div className="text-xs font-bold text-slate-500 space-y-1">
-                      <p>📄 {image.filename}</p>
-                      <p>
-                        ⏰{' '}
-                        {new Date(image.uploadedAt).toLocaleString()}
-                      </p>
+                      <p>{image.filename}</p>
+                      <p>{new Date(image.uploadedAt).toLocaleString()}</p>
                     </div>
                   </div>
                 ))}
@@ -344,7 +345,7 @@ export const DoctorDashboard: React.FC<DoctorDashboardProps> = ({
           {selectedCase.replies.length > 0 && (
             <div className="bg-white rounded-[40px] p-10 border border-emerald-100 shadow-sm">
               <h3 className="text-lg font-black text-slate-900 mb-6">
-                ✅ Previous Replies ({selectedCase.replies.length})
+                Previous Replies ({selectedCase.replies.length})
               </h3>
 
               <div className="space-y-4">
@@ -377,7 +378,7 @@ export const DoctorDashboard: React.FC<DoctorDashboardProps> = ({
                       {reply.medication && (
                         <div className="bg-white p-3 rounded-xl border border-emerald-200 mb-3">
                           <p className="text-xs font-bold text-slate-500 mb-1">
-                            💊 Medication:
+                            Medication:
                           </p>
                           <p className="text-sm font-bold text-slate-700">
                             {reply.medication}
@@ -386,7 +387,7 @@ export const DoctorDashboard: React.FC<DoctorDashboardProps> = ({
                       )}
 
                       <p className="text-xs font-bold text-emerald-600">
-                        ⏰ {new Date(reply.timestamp).toLocaleString()}
+                        {new Date(reply.timestamp).toLocaleString()}
                       </p>
                     </div>
                   ))}
@@ -397,7 +398,7 @@ export const DoctorDashboard: React.FC<DoctorDashboardProps> = ({
           {/* Send Reply Form */}
           <div className="bg-white rounded-[40px] p-10 border border-slate-100 shadow-sm space-y-6">
             <h3 className="text-lg font-black text-slate-900">
-              💬 Send Reply to Patient
+              Send Reply to Patient
             </h3>
 
             {successMessage && (
@@ -416,24 +417,24 @@ export const DoctorDashboard: React.FC<DoctorDashboardProps> = ({
               <div className="grid grid-cols-2 gap-4">
                 <button
                   onClick={() => {
-                    setReplyType('DOCTOR_NOTE');
-                    setMedication('');
+                    setReplyType("DOCTOR_NOTE");
+                    setMedication("");
                   }}
                   className={`py-4 px-6 rounded-2xl font-bold uppercase tracking-widest transition-all border-2 flex items-center justify-center gap-2 ${
-                    replyType === 'DOCTOR_NOTE'
-                      ? 'bg-slate-900 text-white border-slate-900'
-                      : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+                    replyType === "DOCTOR_NOTE"
+                      ? "bg-slate-900 text-white border-slate-900"
+                      : "bg-white text-slate-600 border-slate-200 hover:border-slate-300"
                   }`}
                 >
                   <MessageCircle size={18} />
                   Doctor Note
                 </button>
                 <button
-                  onClick={() => setReplyType('PRESCRIPTION')}
+                  onClick={() => setReplyType("PRESCRIPTION")}
                   className={`py-4 px-6 rounded-2xl font-bold uppercase tracking-widest transition-all border-2 flex items-center justify-center gap-2 ${
-                    replyType === 'PRESCRIPTION'
-                      ? 'bg-slate-900 text-white border-slate-900'
-                      : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+                    replyType === "PRESCRIPTION"
+                      ? "bg-slate-900 text-white border-slate-900"
+                      : "bg-white text-slate-600 border-slate-200 hover:border-slate-300"
                   }`}
                 >
                   <Pill size={18} />
@@ -443,7 +444,7 @@ export const DoctorDashboard: React.FC<DoctorDashboardProps> = ({
             </div>
 
             {/* Reply Content */}
-            {replyType === 'DOCTOR_NOTE' ? (
+            {replyType === "DOCTOR_NOTE" ? (
               <div className="space-y-2">
                 <label className="text-xs font-black text-slate-400 uppercase tracking-widest">
                   Doctor's Note
@@ -509,41 +510,3 @@ export const DoctorDashboard: React.FC<DoctorDashboardProps> = ({
 };
 
 export default DoctorDashboard;
-
-/**
- * USAGE IN DOCTOR VIEW:
- * ====================
- * 
- * if (userRole === 'DOCTOR' && doctorProfile) {
- *   return (
- *     <DoctorDashboard
- *       doctorId={doctorProfile.id}
- *       doctorName={doctorProfile.name}
- *       specialization={doctorProfile.specialization}
- *       clinicId={doctorProfile.clinicId}
- *     />
- *   );
- * }
- * 
- * KEY FIXES:
- * ==========
- * 1. ✅ getAllCases() reads from shared 'medicalCases' key
- * 2. ✅ Doctor sees ALL cases (not role-specific)
- * 3. ✅ Images displayed via getImageUrl() (proper Base64 formatting)
- * 4. ✅ addDoctorReply() updates same case object
- * 5. ✅ Patient refreshes and sees doctor's reply
- * 
- * DATA FLOW:
- * ==========
- * Patient login → Upload image → createMedicalCase()
- *   ↓
- *   Saved to localStorage['medicalCases']
- *   ↓
- * Doctor login → getAllCases() → Sees patient's image
- *   ↓
- *   Writes reply → addDoctorReply()
- *   ↓
- *   Same case object updated in localStorage['medicalCases']
- *   ↓
- * Patient refreshes → getCasesByPatient() → Sees doctor's reply
- */

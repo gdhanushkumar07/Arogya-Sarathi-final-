@@ -11,6 +11,11 @@ Arogya Sarathi is a rule-based rural health management system. It provides a lig
 - `data/` — demo hospital and pharmacy data
 - `backend/` — Express server that powers messaging, reminders, and delta-sync
 
+## Environment Variables
+
+This project does not require any sensitive environment variables.
+It uses simulated data for hackathon demonstration.
+
 ## Prerequisites
 
 - Node.js 18+ (recommended)
@@ -19,13 +24,15 @@ Arogya Sarathi is a rule-based rural health management system. It provides a lig
 
 ## Setup
 
-1) Install frontend dependencies  
+1. Install frontend dependencies
+
 ```bash
 cd Arogya_Sarathi
 npm install
 ```
 
-2) Install backend dependencies  
+2. Install backend dependencies
+
 ```bash
 cd backend
 npm install
@@ -33,19 +40,22 @@ npm install
 
 ## Run the application (development)
 
-1) Start the backend (port 4000)  
+1. Start the backend (port 4000)
+
 ```bash
 cd Arogya_Sarathi/backend
 node index.js
 ```
 
-2) In a new terminal, start the frontend (Vite dev server, defaults to port 5173)  
+2. In a new terminal, start the frontend (Vite dev server, defaults to port 5173)
+
 ```bash
 cd Arogya_Sarathi
 npm run dev
 ```
 
-3) Open the app in your browser  
+3. Open the app in your browser
+
 ```
 http://localhost:5173
 ```
@@ -59,6 +69,7 @@ http://localhost:5173
 ## Build
 
 To create a production build of the frontend:
+
 ```bash
 cd Arogya_Sarathi
 npm run build
@@ -69,7 +80,3 @@ npm run build
 - The backend stores data in-memory for demos. Restarting the server clears messages and sync packets.
 - Features are deterministic and rule-based—no machine learning or external data services.
 - Use separate browser sessions to simulate different roles (patient, doctor, pharmacy).
-
-## Healthcare disclaimer
-
-This project is for demonstration and educational purposes only. It is not intended for real medical diagnosis or treatment. Always consult qualified healthcare professionals for medical advice.
